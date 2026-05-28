@@ -540,7 +540,7 @@ export async function handleApi(
         default_branch: string
       }>()
 
-      let url = "https://api.github.com/user/repos?per_page=100&sort=updated&type=all"
+      let url: string | undefined = "https://api.github.com/user/repos?per_page=100&sort=updated&type=all"
       let page = 0
 
       while (url) {
