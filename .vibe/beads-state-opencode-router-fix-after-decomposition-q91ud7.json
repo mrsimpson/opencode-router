@@ -1,0 +1,24 @@
+{
+  "conversationId": "opencode-router-fix-after-decomposition-q91ud7",
+  "projectPath": "/Users/oliverjaegle/projects/privat/opencode-router",
+  "epicId": "opencode-router-2",
+  "phaseTasks": [
+    {
+      "phaseId": "explore",
+      "phaseName": "Explore",
+      "taskId": "opencode-router-2.1"
+    },
+    {
+      "phaseId": "implement",
+      "phaseName": "Implement",
+      "taskId": "opencode-router-2.2"
+    },
+    {
+      "phaseId": "finalize",
+      "phaseName": "Finalize",
+      "taskId": "opencode-router-2.3"
+    }
+  ],
+  "createdAt": "2026-05-29T05:02:22.814Z",
+  "updatedAt": "2026-05-29T05:02:22.814Z"
+}
