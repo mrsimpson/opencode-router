@@ -7,12 +7,15 @@
   "scripts": {
     "build": "pnpm --filter ./packages/router build && pnpm --filter ./packages/app build",
     "typecheck": "pnpm --filter ./packages/router typecheck && pnpm --filter ./packages/app typecheck && pnpm --filter ./packages/plugin typecheck",
+    "lint": "pnpm run typecheck",
     "test": "pnpm --filter ./packages/router test && pnpm --filter ./packages/app test && pnpm --filter ./packages/plugin test",
     "dev:router": "pnpm --filter ./packages/router dev",
     "dev:app": "pnpm --filter ./packages/app dev",
-    "dev:mock": "MOCK_K8S=true DEV_EMAIL=dev@local.test ROUTER_DOMAIN=localhost:3002 ROUTER_PROTO=http PORT=3002 DEV_VITE_URL=http://localhost:5173 OPENCODE_IMAGE=ghcr.io/mrsimpson/opencode:latest pnpm --filter ./packages/router dev"
+    "dev:mock": "MOCK_K8S=true DEV_EMAIL=dev@local.test ROUTER_DOMAIN=localhost:3002 ROUTER_PROTO=http PORT=3002 DEV_VITE_URL=http://localhost:5173 OPENCODE_IMAGE=ghcr.io/mrsimpson/opencode:latest pnpm --filter ./packages/router dev",
+    "prepare": "husky"
   },
   "devDependencies": {
+    "husky": "^9.1.7",
     "typescript": "^5.8.0"
   }
 }
