@@ -141,7 +141,7 @@ Open `http://localhost:3002`. Session subdomains resolve via the browser's built
 
 ### Production deployment
 
-The recommended deployment target is Kubernetes via Pulumi. A ready-to-use Pulumi stack for homelab environments is maintained in **[homelab-apps/apps/opencode-router](https://github.com/mrsimpson/homelab-apps/tree/main/apps/opencode-router)**.
+The recommended deployment target is Kubernetes via Pulumi. A ready-to-use Pulumi stack for homelab environments is maintained in **[homelab-apps/apps/opencode-router](https://github.com/digitaleraluhut/homelab-apps/tree/main/apps/opencode-router)**.
 
 The stack provisions:
 
@@ -153,7 +153,7 @@ The stack provisions:
 - Secrets for LLM API keys (OpenRouter) and Cloudflare API token
 - ConfigMap for opencode defaults (models, skills, agent config)
 
-See the [homelab-apps stack](https://github.com/mrsimpson/homelab-apps/tree/main/apps/opencode-router) for full configuration reference.
+See the [homelab-apps stack](https://github.com/digitaleraluhut/homelab-apps/tree/main/apps/opencode-router) for full configuration reference.
 
 ## CI/CD
 

@@ -5,13 +5,13 @@ name: Build and publish opencode-router image
 # Image: ghcr.io/<owner>/opencode-router:<version>-main.<sha7>  and  :latest
 #
 # After a successful build the image tag can be deployed to the homelab by:
-#   Option A (automatic): Configure HOMELAB_APPS_PAT secret (fine-grained PAT with
-#     "Actions: write" permission on mrsimpson/homelab-apps). The "trigger-deploy" job
-#     then dispatches the deploy-opencode-router workflow in homelab-apps automatically.
-#   Option B (manual): Run:
-#     gh workflow run deploy-opencode-router.yml \
-#       --repo mrsimpson/homelab-apps \
-#       --field routerImage=ghcr.io/mrsimpson/opencode-router:<tag>
+  #   Option A (automatic): Configure HOMELAB_APPS_PAT secret (fine-grained PAT with
+  #     "Actions: write" permission on digitaleraluhut/homelab-apps). The "trigger-deploy" job
+  #     then dispatches the deploy-opencode-router workflow in homelab-apps automatically.
+  #   Option B (manual): Run:
+  #     gh workflow run deploy-opencode-router.yml \
+  #       --repo digitaleraluhut/homelab-apps \
+  #       --field routerImage=ghcr.io/mrsimpson/opencode-router:<tag>
 #   Option C (Renovate): Renovate tracks GHCR image tags and opens PRs against
 #     homelab-apps when new tags appear.
 #
@@ -76,7 +76,7 @@ jobs:
   trigger-deploy:
     # Dispatches the deploy-opencode-router workflow in homelab-apps with the new image tag.
     # Requires HOMELAB_APPS_PAT secret: a fine-grained PAT with "Actions: write" on
-    # mrsimpson/homelab-apps. If the secret is absent the step exits 0 gracefully.
+    # digitaleraluhut/homelab-apps. If the secret is absent the step exits 0 gracefully.
     needs: build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
@@ -85,14 +85,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.HOMELAB_APPS_PAT }}
           IMAGE: ${{ needs.build.outputs.image }}
-          OWNER: ${{ github.repository_owner }}
         run: |
           if [ -z "${GH_TOKEN}" ]; then
             echo "HOMELAB_APPS_PAT secret not configured — skipping auto-deploy."
-            echo "To deploy manually: gh workflow run deploy-opencode-router.yml --repo ${OWNER}/homelab-apps --field routerImage=${IMAGE}"
+            echo "To deploy manually: gh workflow run deploy-opencode-router.yml --repo digitaleraluhut/homelab-apps --field routerImage=${IMAGE}"
             exit 0
           fi
           gh workflow run deploy-opencode-router.yml \
-            --repo "${OWNER}/homelab-apps" \
+            --repo "digitaleraluhut/homelab-apps" \
             --field "routerImage=${IMAGE}"
-          echo "Triggered deploy-opencode-router.yml in ${OWNER}/homelab-apps with image: ${IMAGE}"
+          echo "Triggered deploy-opencode-router.yml in digitaleraluhut/homelab-apps with image: ${IMAGE}"
