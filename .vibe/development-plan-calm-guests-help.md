@@ -77,10 +77,13 @@ Users cannot select organization repositories from the dropdown, forcing them to
 
 ## Finalize
 ### Tasks
-- [ ] Commit the changes
+- [x] **Code Cleanup**: Verified no debug output, TODOs, or FIXMEs in changed files
+- [x] **Documentation Review**: No `/home/opencode/repo/.vibe/docs/design.md` exists — no docs to update
+- [x] **Final Validation**: All 216 tests pass via `vitest run src/`
+- [x] Commit the changes (`28a7656`)
 
 ### Completed
-*None yet*
+*All Finalize tasks completed*
 
 
 
