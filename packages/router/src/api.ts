@@ -532,29 +532,63 @@ export async function handleApi(
       return true
     }
     try {
-      const reposRes = await fetch("https://api.github.com/user/repos?per_page=100&sort=updated", {
-        headers: {
-          Authorization: `Bearer ${githubToken}`,
-          Accept: "application/vnd.github.v3+json",
-          "User-Agent": "opencode-router",
-        },
-      })
-      if (!reposRes.ok) {
-        const err = await reposRes.text()
-        json(res, reposRes.status, { error: err })
-        return true
-      }
-      const repos = (await reposRes.json()) as {
+      const allRepos = new Map<string, {
         name: string
         full_name: string
         html_url: string
         private: boolean
         default_branch: string
-      }[]
+      }>()
+
+      let url = "https://api.github.com/user/repos?per_page=100&sort=updated&type=all"
+      let page = 0
+
+      while (url) {
+        const reposRes = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${githubToken}`,
+            Accept: "application/vnd.github.v3+json",
+            "User-Agent": "opencode-router",
+          },
+        })
+        if (!reposRes.ok) {
+          const err = await reposRes.text()
+          json(res, reposRes.status, { error: err })
+          return true
+        }
+        const repos = (await reposRes.json()) as {
+          name: string
+          full_name: string
+          html_url: string
+          private: boolean
+          default_branch: string
+        }[]
+        for (const r of repos) {
+          allRepos.set(r.full_name, r)
+        }
+
+        // Parse Link header for pagination
+        const linkHeader = reposRes.headers.get("link")
+        url = undefined
+        if (linkHeader) {
+          const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/)
+          if (nextMatch) {
+            url = nextMatch[1]
+          }
+        }
+
+        page++
+        if (page > 50) {
+          // Safety limit to prevent infinite loops
+          break
+        }
+      }
+
+      const dedupedRepos = Array.from(allRepos.values())
       json(
         res,
         200,
-        repos.map((r) => ({
+        dedupedRepos.map((r) => ({
           name: r.name,
           fullName: r.full_name,
           url: r.html_url,

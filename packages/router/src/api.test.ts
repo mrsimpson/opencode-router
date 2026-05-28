@@ -691,6 +691,9 @@ describe("GET /api/user/repos", () => {
     globalThis.fetch = vi.fn(() =>
       Promise.resolve({
         ok: true,
+        headers: {
+          get: () => null, // no pagination
+        },
         json: () => Promise.resolve(mockRepos),
       } as Response),
     )
@@ -725,6 +728,96 @@ describe("GET /api/user/repos", () => {
     await handleApi(req as any, res as any, EMAIL, "gho_invalid_token")
 
     expect(res.statusCode).toBe(403)
+  })
+
+  it("handles pagination and deduplicates repos across multiple pages", async () => {
+    const page1Repos = [
+      {
+        name: "repo-a",
+        full_name: "org/repo-a",
+        html_url: "https://github.com/org/repo-a",
+        private: false,
+      },
+      {
+        name: "repo-b",
+        full_name: "org/repo-b",
+        html_url: "https://github.com/org/repo-b",
+        private: true,
+      },
+    ]
+    const page2Repos = [
+      {
+        name: "repo-a",
+        full_name: "org/repo-a", // duplicate
+        html_url: "https://github.com/org/repo-a",
+        private: false,
+      },
+      {
+        name: "repo-c",
+        full_name: "org/repo-c",
+        html_url: "https://github.com/org/repo-c",
+        private: false,
+      },
+    ]
+
+    let callCount = 0
+    const nextLink = "<https://api.github.com/user/repos?page=2>" + "; rel=\"next\""
+    globalThis.fetch = vi.fn(() => {
+      callCount++
+      if (callCount === 1) {
+        return Promise.resolve({
+          ok: true,
+          headers: {
+            get: (name: string) => (name === "link" ? nextLink : null),
+          },
+          json: () => Promise.resolve(page1Repos),
+        } as Response)
+      }
+      return Promise.resolve({
+        ok: true,
+        headers: {
+          get: (name: string) => null, // no next page
+        },
+        json: () => Promise.resolve(page2Repos),
+      } as Response)
+    })
+
+    const req = fakeReq("GET", "/api/user/repos")
+    const res = fakeRes()
+
+    await handleApi(req as any, res as any, EMAIL, "gho_test_token")
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    // Should have 3 unique repos (repo-a deduplicated)
+    expect(body).toHaveLength(3)
+    expect(body.map((r: any) => r.fullName)).toContain("org/repo-a")
+    expect(body.map((r: any) => r.fullName)).toContain("org/repo-b")
+    expect(body.map((r: any) => r.fullName)).toContain("org/repo-c")
+    // Should have fetched 2 pages
+    expect(callCount).toBe(2)
+  })
+
+  it("includes type=all in the GitHub API query", async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        headers: {
+          get: () => null,
+        },
+        json: () => Promise.resolve([]),
+      } as Response),
+    )
+
+    const req = fakeReq("GET", "/api/user/repos")
+    const res = fakeRes()
+
+    await handleApi(req as any, res as any, EMAIL, "gho_test_token")
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("type=all"),
+      expect.any(Object),
+    )
   })
 })
 
