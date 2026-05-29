@@ -8,6 +8,8 @@ type Props = {
   placeholder?: string
   /** Current value */
   value: string
+  /** Called when user types in the input */
+  onInput?: (value: string) => void
   /** Called when user selects an item */
   onSelect: (value: string) => void
   /** Items fetched from API */
@@ -91,7 +93,7 @@ export function Autocomplete(props: Props) {
         value={props.value}
         onInput={(e) => {
           const v = e.currentTarget.value
-          props.onSelect(v)
+          props.onInput?.(v)
           if (v.trim() && displayItems().length > 0) {
             setIsOpen(true)
           }
