@@ -9,6 +9,7 @@ Fix the repository drop-down in the frontend so it lists repositories from organ
 ## Key Decisions
 * The fix will be in the backend (router) API handler since that's where the GitHub API call is made.
 * We will explicitly set `type=all` in the GitHub API query and implement pagination to fetch all repositories.
+* The `Autocomplete` component needed a separate `onInput` callback to decouple typing from item selection — `onSelect` should only fire on actual selection, not on every keystroke.
 
 ## Notes
 - The repository dropdown is rendered by `SessionInputBar` component (`packages/app/src/session-input-bar.tsx`)
@@ -183,40 +184,16 @@ When the user types "my", the handler receives the raw text "my" (not a URL), an
 
 **Root cause of autocomplete "failing"**: The `onInput` handler calls `props.onSelect(v)` with the raw input text. The `Autocomplete` component's `onSelect` prop is semantically meant for "user selected an item" but is being used as "value changed". This conflates two different events.
 
-### Fix Required
+### Fix Applied
 
-The `Autocomplete` component needs a separate `onInput` callback to decouple typing from item selection:
+The `Autocomplete` component now has a separate `onInput` callback to decouple typing from item selection:
 
-```tsx
-// In autocomplete.tsx, replace:
-onInput={(e) => {
-  const v = e.currentTarget.value
-  props.onSelect(v)  // <-- WRONG: triggers action on every keystroke
-  ...
-}}
+**`packages/app/src/autocomplete.tsx`**:
+- Added `onInput?: (value: string) => void` to Props type (line 12)
+- Changed `onInput` handler to call `props.onInput?.(v)` instead of `props.onSelect(v)` (line 95)
 
-// With:
-onInput={(e) => {
-  const v = e.currentTarget.value
-  props.onInput?.(v)  // <-- NEW: separate callback for typing
-  ...
-}}
-```
-
-Then in `session-input-bar.tsx`:
-```tsx
-<Autocomplete
-  onSelect={(url) => {
-    props.onRepoUrlChange(url)
-    loadBranchesForRepo(url)  // Only called on actual selection
-  }}
-  onInput={(text) => {
-    props.onRepoUrlChange(text)  // Only updates state, no side effects
-  }}
-  items={repoItems()}
-  loading={reposLoading()}
-/>
-```
+**`packages/app/src/session-input-bar.tsx`**:
+- Split the `onSelect` prop into `onInput` (for typing, updates repoUrl state only) and `onSelect` (for selection, loads branches) (lines 178-180)
 
 ### Additional Observation: Filtering by label only
 
