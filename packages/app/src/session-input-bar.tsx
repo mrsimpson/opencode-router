@@ -175,10 +175,8 @@ export function SessionInputBar(props: Props) {
             <Autocomplete
               placeholder={t("app.newSession.repoUrl.placeholder")}
               value={props.repoUrl}
-              onSelect={(v) => {
-                props.onRepoUrlChange(v)
-                loadBranchesForRepo(v)
-              }}
+              onInput={(v) => props.onRepoUrlChange(v)}
+              onSelect={(v) => loadBranchesForRepo(v)}
               items={repoItems()}
               loading={reposLoading()}
             />
