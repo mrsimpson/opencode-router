@@ -9,6 +9,22 @@ export const config = {
   namespace: process.env.OPENCODE_NAMESPACE ?? "opencode",
   opencodeImage: required("OPENCODE_IMAGE"),
   chromiumImage: process.env.CHROMIUM_IMAGE ?? "chromedp/headless-shell:latest",
+  /**
+   * Port the editor sidecar listens on inside the session pod.
+   * Default: 7681
+   */
+  editorPort: Number(process.env.EDITOR_PORT ?? 7681),
+  /**
+   * Prefix for editor session subdomains.
+   * Editor URLs will be: https://<editorRoutePrefix><hash><routeSuffix>.<routerDomain>
+   * Default: "editor-"
+   */
+  editorRoutePrefix: process.env.EDITOR_ROUTE_PREFIX ?? "editor-",
+  /**
+   * OCI image for the editor sidecar container.
+   * Default: ghcr.io/mrsimpson/opencode-editor:latest
+   */
+  editorImage: process.env.EDITOR_IMAGE ?? "ghcr.io/mrsimpson/opencode-editor:latest",
   opencodePort: 4096,
   /**
    * Port for the attach server (local client connecting to router session).

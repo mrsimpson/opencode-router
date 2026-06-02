@@ -75,6 +75,27 @@ function getAttachSessionHash(host: string): string | null {
 }
 
 /**
+ * Extract editor session hash from the Host header.
+ * Returns the hash if the request is on an editor subdomain, or null otherwise.
+ *
+ * Editor hostname format: <editorRoutePrefix><hash><routeSuffix>.<routerDomain>
+ * e.g. with editorRoutePrefix="editor-", routeSuffix="-oc", routerDomain="no-panic.org":
+ *   editor-abc123def456-oc.no-panic.org → "abc123def456"
+ */
+function getEditorSessionHash(host: string): string | null {
+  const hostname = host.split(":")[0]
+  const routerHostname = config.routerDomain.split(":")[0]
+  const suffix = `${config.routeSuffix}.${routerHostname}`
+  const prefix = config.editorRoutePrefix
+
+  if (!hostname.endsWith(suffix) || !hostname.startsWith(prefix)) return null
+
+  const hashPart = hostname.slice(prefix.length, hostname.length - suffix.length)
+  if (/^[a-f0-9]{12}$/.test(hashPart)) return hashPart
+  return null
+}
+
+/**
  * Validate attach password from request.
  * Checks (in order):
  *   1. HTTP Basic Auth header (used by `opencode attach --password`)
@@ -230,6 +251,17 @@ const handler: http.RequestListener = async (req, res) => {
   }
 
   try {
+    // ── Editor subdomain: OAuth-validated, proxy to editor sidecar ────
+    const editorHash = getEditorSessionHash(host)
+    if (editorHash) {
+      if (!(await proxyToPod(editorHash, config.editorPort, req, res))) {
+        res
+          .writeHead(503, { "Content-Type": "application/json" })
+          .end(JSON.stringify({ error: "session not ready", hash: editorHash }))
+      }
+      return
+    }
+
     const { hash, port } = getSessionInfo(host)
 
     if (hash) {
@@ -290,6 +322,16 @@ const wsHandler = async (req: http.IncomingMessage, socket: import("stream").Dup
 
   try {
     const host = req.headers.host ?? ""
+
+    // Editor subdomain: OAuth-validated, proxy to editor sidecar
+    const editorHash = getEditorSessionHash(host)
+    if (editorHash) {
+      if (!(await proxyToPod(editorHash, config.editorPort, req, undefined, socket, head))) {
+        socket.destroy()
+      }
+      return
+    }
+
     const { hash, port } = getSessionInfo(host)
 
     if (hash) {

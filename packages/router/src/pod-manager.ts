@@ -179,6 +179,8 @@ export interface SessionInfo {
   attachUrl?: string
   /** Password for attach authentication (only included for session owner) */
   attachPassword?: string
+  /** Editor URL for the web-based file editor (e.g., https://editor-<hash>.<domain>) */
+  editorUrl?: string
 }
 
 /**
@@ -251,6 +253,9 @@ async function buildSessionInfo(
   // Build attach URL
   const attachUrl = getAttachUrl(hash)
 
+  // Build editor URL
+  const editorUrl = getEditorUrl(hash)
+
   // Include attach password only for session owner (email match)
   const pvcEmail = ann[ANNOTATION_USER_EMAIL] ?? ""
   const attachPassword = pvcEmail === email ? ann[ANNOTATION_ATTACH_PASSWORD] : undefined
@@ -270,6 +275,7 @@ async function buildSessionInfo(
     title: messageStore.get(hash)?.title,
     attachUrl,
     attachPassword,
+    editorUrl,
   }
 }
 
@@ -414,6 +420,15 @@ export async function getOrCreateAttachPassword(hash: string): Promise<string> {
 export function getAttachUrl(hash: string): string {
   const proto = config.routerProto ?? "https"
   return `${proto}://${config.attachRoutePrefix}${hash}${config.routeSuffix}.${config.routerDomain}`
+}
+
+/**
+ * Build the editor URL for a session.
+ * Format: https://<editorRoutePrefix><hash><routeSuffix>.<routerDomain>
+ */
+export function getEditorUrl(hash: string): string {
+  const proto = config.routerProto ?? "https"
+  return `${proto}://${config.editorRoutePrefix}${hash}${config.routeSuffix}.${config.routerDomain}`
 }
 
 function podName(hash: string): string {
@@ -903,6 +918,24 @@ export async function ensurePod(
             requests: { cpu: "100m", memory: "256Mi" },
             limits: { cpu: "1000m", memory: "1Gi" },
           },
+        },
+        {
+          name: "editor",
+          image: config.editorImage,
+          ports: [{ containerPort: config.editorPort }],
+          securityContext: {
+            allowPrivilegeEscalation: false,
+            runAsNonRoot: true,
+            capabilities: { drop: ["ALL"] },
+            seccompProfile: { type: "RuntimeDefault" },
+          },
+          resources: {
+            requests: { cpu: "50m", memory: "32Mi" },
+            limits: { cpu: "200m", memory: "128Mi" },
+          },
+          volumeMounts: [
+            { name: "user-data", mountPath: "/home/opencode" },
+          ],
         },
       ],
       volumes: [

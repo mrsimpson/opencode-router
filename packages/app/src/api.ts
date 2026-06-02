@@ -21,6 +21,8 @@ export const SessionSchema = z.object({
   attachUrl: z.string().optional(),
   /** Password for attach authentication (only included for session owner) */
   attachPassword: z.string().optional(),
+  /** Editor URL for the web-based file editor */
+  editorUrl: z.string().optional(),
   lastActivity: z.string(),
   createdAt: z.string(),
   idleTimeoutMinutes: z.number(),

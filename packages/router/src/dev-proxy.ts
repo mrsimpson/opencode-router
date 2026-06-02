@@ -39,23 +39,28 @@ async function freePort(): Promise<number> {
  * Get a local proxy target URL for a session pod.
  * Spawns kubectl port-forward on first call per hash; reuses on subsequent calls.
  * Returns `http://localhost:<port>` or null if the forward fails.
+ *
+ * @param hash - Session hash
+ * @param port - Remote port to forward (defaults to config.opencodePort)
  */
-export async function target(hash: string): Promise<string | null> {
+export async function target(hash: string, port?: number): Promise<string | null> {
   // Single fixed target overrides everything
   if (config.devPodProxyTarget) return config.devPodProxyTarget
 
-  const existing = forwards.get(hash)
+  const remotePort = port ?? config.opencodePort
+  const cacheKey = `${hash}:${remotePort}`
+  const existing = forwards.get(cacheKey)
   if (existing) {
     try {
-      const port = await existing.ready
-      return `http://localhost:${port}`
+      const localPort = await existing.ready
+      return `http://localhost:${localPort}`
     } catch {
       // Previous forward failed; clean up and retry below
-      forwards.delete(hash)
+      forwards.delete(cacheKey)
     }
   }
 
-  const port = await freePort()
+  const localPort = await freePort()
   const pod = `opencode-session-${hash}`
 
   // Use the system default kubeconfig (not the SA kubeconfig from KUBECONFIG env var)
@@ -65,7 +70,7 @@ export async function target(hash: string): Promise<string | null> {
 
   const proc = spawn(
     "kubectl",
-    ["port-forward", `pod/${pod}`, `${port}:${config.opencodePort}`, "-n", config.namespace],
+    ["port-forward", `pod/${pod}`, `${localPort}:${remotePort}`, "-n", config.namespace],
     { stdio: ["ignore", "pipe", "pipe"], env },
   )
 
@@ -78,7 +83,7 @@ export async function target(hash: string): Promise<string | null> {
       // kubectl prints "Forwarding from 127.0.0.1:<port> -> <port>" when ready
       if (line.includes("Forwarding from")) {
         clearTimeout(timeout)
-        resolve(port)
+        resolve(localPort)
       }
     })
 
@@ -88,20 +93,20 @@ export async function target(hash: string): Promise<string | null> {
 
     proc.on("exit", (code) => {
       clearTimeout(timeout)
-      forwards.delete(hash)
+      forwards.delete(cacheKey)
       if (code !== 0) reject(new Error(`port-forward exited ${code}: ${stderr}`))
     })
   })
 
-  const fwd: Forward = { port, proc, ready }
-  forwards.set(hash, fwd)
+  const fwd: Forward = { port: localPort, proc, ready }
+  forwards.set(cacheKey, fwd)
 
   try {
     const resolved = await ready
     return `http://localhost:${resolved}`
   } catch (err) {
-    console.error(`[dev-proxy] port-forward failed for ${hash}:`, err)
-    forwards.delete(hash)
+    console.error(`[dev-proxy] port-forward failed for ${hash}:${remotePort}:`, err)
+    forwards.delete(cacheKey)
     return null
   }
 }

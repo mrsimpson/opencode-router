@@ -70,6 +70,9 @@ Kubernetes (namespace: code)
 | `CONFIG_MAP_NAME` | | `opencode-config-dir` | ConfigMap with opencode config files merged into each pod |
 | `IMAGE_PULL_SECRET_NAME` | | — | imagePullSecret for private registries |
 | `ATTACH_PORT` | | `4096` | Port for the `opencode attach` endpoint (separate from the main HTTP server) |
+| `EDITOR_PORT` | | `7681` | Port the editor sidecar listens on inside the session pod |
+| `EDITOR_ROUTE_PREFIX` | | `editor-` | Prefix for editor session subdomains (e.g. `editor-<hash>-oc.<domain>`) |
+| `EDITOR_IMAGE` | | `ghcr.io/mrsimpson/opencode-editor:latest` | OCI image for the editor sidecar container |
 | `ADMIN_SECRET` | | — | Secret for admin endpoints (e.g. image pre-pull). Optional. |
 | `DEBUG_HEADERS` | | `false` | Log all incoming request headers (useful for diagnosing missing auth headers) |
 

@@ -140,6 +140,62 @@ describe("getAttachSessionHash extracts hash from attach subdomain", () => {
 })
 
 // ---------------------------------------------------------------------------
+// getEditorSessionHash — extract session hash from editor subdomain
+// ---------------------------------------------------------------------------
+
+describe("getEditorSessionHash extracts hash from editor subdomain", () => {
+  const editorRoutePrefix = "editor-"
+
+  function getEditorSessionHash(host: string): string | null {
+    const hostname = host.split(":")[0]
+    const routerHostname = routerDomain.split(":")[0]
+    const suffix = `${routeSuffix}.${routerHostname}`
+    const prefix = editorRoutePrefix
+
+    if (!hostname.endsWith(suffix) || !hostname.startsWith(prefix)) return null
+
+    const hashPart = hostname.slice(prefix.length, hostname.length - suffix.length)
+    if (/^[a-f0-9]{12}$/.test(hashPart)) return hashPart
+    return null
+  }
+
+  it("extracts hash from editor subdomain", () => {
+    const result = getEditorSessionHash("editor-abc123def456-oc.no-panic.org")
+    expect(result).toBe("abc123def456")
+  })
+
+  it("returns null for regular (non-editor) session subdomain", () => {
+    const result = getEditorSessionHash("abc123def456-oc.no-panic.org")
+    expect(result).toBeNull()
+  })
+
+  it("returns null for non-session hostname", () => {
+    const result = getEditorSessionHash("www.no-panic.org")
+    expect(result).toBeNull()
+  })
+
+  it("returns null for invalid hash on editor subdomain", () => {
+    const result = getEditorSessionHash("editor-tooshort-oc.no-panic.org")
+    expect(result).toBeNull()
+  })
+
+  it("handles port in Host header", () => {
+    const result = getEditorSessionHash("editor-abc123def456-oc.no-panic.org:443")
+    expect(result).toBe("abc123def456")
+  })
+
+  it("returns null when prefix does not match", () => {
+    const result = getEditorSessionHash("other-abc123def456-oc.no-panic.org")
+    expect(result).toBeNull()
+  })
+
+  it("returns null for attach subdomain (different prefix)", () => {
+    const result = getEditorSessionHash("attach-abc123def456-oc.no-panic.org")
+    expect(result).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // validateAttachPassword — Basic Auth header parsing
 // ---------------------------------------------------------------------------
 

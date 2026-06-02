@@ -12,8 +12,8 @@ name: Build and publish opencode-router image
   #     gh workflow run deploy-opencode-router.yml \
   #       --repo digitaleraluhut/homelab-apps \
   #       --field routerImage=ghcr.io/mrsimpson/opencode-router:<tag>
-#   Option C (Renovate): Renovate tracks GHCR image tags and opens PRs against
-#     homelab-apps when new tags appear.
+  #   Option C (Renovate): Renovate tracks GHCR image tags and opens PRs against
+  #     homelab-apps when new tags appear.
 #
 # Note: uses plain `docker build` + `docker push` (not buildx) to avoid
 # GHCR cross-owner blob mount 403 errors that occur with buildx on new packages.
@@ -34,6 +34,7 @@ permissions:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/opencode-router
+  EDITOR_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/opencode-editor
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -73,6 +74,43 @@ jobs:
           docker push ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }}
           docker push ${{ env.IMAGE_NAME }}:latest
           echo "Built and pushed ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }}"
+
+  build-editor:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      image: ${{ steps.version.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GH_PAT }}" | docker login ghcr.io \
+            -u ${{ github.repository_owner }} --password-stdin
+
+      - name: Get version from package.json
+        id: version
+        run: |
+          VERSION=$(node -p "require('./packages/editor/package.json').version")
+          SHA_SHORT=${GITHUB_SHA::7}
+          TAG="${VERSION}-${GITHUB_REF_NAME}.${SHA_SHORT}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "image=${EDITOR_IMAGE_NAME}:${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Build editor
+        working-directory: packages/editor
+        run: |
+          docker build \
+            -t ${{ env.EDITOR_IMAGE_NAME }}:${{ steps.version.outputs.tag }} \
+            -t ${{ env.EDITOR_IMAGE_NAME }}:latest \
+            .
+
+      - name: Push editor
+        run: |
+          docker push ${{ env.EDITOR_IMAGE_NAME }}:${{ steps.version.outputs.tag }}
+          docker push ${{ env.EDITOR_IMAGE_NAME }}:latest
+          echo "Built and pushed ${{ env.EDITOR_IMAGE_NAME }}:${{ steps.version.outputs.tag }}"
 
   trigger-deploy:
     # Dispatches the deploy-opencode-router workflow in homelab-apps with the new image tag.

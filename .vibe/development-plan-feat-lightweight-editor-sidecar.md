@@ -438,10 +438,37 @@ Enable users to manually edit files on the PVC that were manipulated by the AI a
 
 ## Implement
 ### Tasks
-- [ ] *To be added when this phase becomes active*
+- [x] Slice 1: Router Routing + Minimal Editor Sidecar (Infrastructure)
 
 ### Completed
-*None yet*
+**Slice 1 — completed 2026-06-02**
+
+1. ✅ `packages/router/src/config.ts` — Added `editorPort` (default `7681`, env `EDITOR_PORT`), `editorRoutePrefix` (default `"editor-"`, env `EDITOR_ROUTE_PREFIX`), `editorImage` (default `"ghcr.io/mrsimpson/opencode-editor:latest"`, env `EDITOR_IMAGE`).
+2. ✅ `packages/router/src/index.ts` — Added `getEditorSessionHash(host)` extractor following the `getAttachSessionHash` pattern. In both `handler` and `wsHandler`, editor subdomain is checked **after** email/OAuth validation, **before** `getSessionInfo`, and proxies to `proxyToPod(hash, config.editorPort, req, res)`.
+3. ✅ `packages/router/src/pod-manager.ts` — Added third `editor` container to pod spec in `ensurePod` with `image: config.editorImage`, `ports: [{ containerPort: config.editorPort }]`, `volumeMounts: [{ name: "user-data", mountPath: "/home/opencode" }]`, restrictive `securityContext` (identical to `chromium`), and lightweight resources (`requests: cpu 50m/memory 32Mi`, `limits: cpu 200m/memory 128Mi`). Added `getEditorUrl(hash)` helper. Added `editorUrl?: string` to `SessionInfo`. Included `editorUrl: getEditorUrl(hash)` in `buildSessionInfo` return object.
+4. ✅ `packages/router/src/dev-proxy.ts` — Enhanced `target(hash, port?)` to accept an optional `port` parameter. Spawns `kubectl port-forward pod/${pod} ${localPort}:${remotePort}` for the requested remote port, defaulting to `config.opencodePort` when omitted. Backward-compatible.
+5. ✅ `packages/router/src/mock-k8s.ts` — Added `editor` container metadata to `makeRunningPod` so mock-mode pod specs include it.
+6. ✅ `packages/app/src/api.ts` — Added `editorUrl: z.string().optional()` to `SessionSchema`.
+7. ✅ `packages/editor/package.json` — Created workspace package with `"type": "module"`, dev deps `typescript`, `tsx`, `@types/node`, `@tsconfig/node22`.
+8. ✅ `packages/editor/src/server.ts` — Minimal Node.js `http` server listening on `process.env.EDITOR_PORT || 7681`. Serves static files from `packages/editor/static/`. Supports `GET /`, `GET /index.html`, and `GET /health`. Uses Node built-ins only (no Express). Includes path-traversal defense.
+9. ✅ `packages/editor/static/index.html` — Single HTML file with "Editor is online" text and minimal dark styling.
+10. ✅ `packages/editor/Dockerfile` — Uses `node:22-alpine` base. Copies `src/server.js` and `static/` and runs `node src/server.js`. Minimal image.
+11. ✅ Root `Dockerfile` — No changes needed. The root Dockerfile only copies `packages/router` and `packages/app`; the editor image is built separately from `packages/editor/Dockerfile`.
+12. ✅ `.github/workflows/build-image.yml` — Added second `build-editor` job that builds and pushes `ghcr.io/${{ github.repository_owner }}/opencode-editor:<tag>` and `:latest`.
+13. ✅ `README.md` — Documented new env vars (`EDITOR_PORT`, `EDITOR_ROUTE_PREFIX`, `EDITOR_IMAGE`) in the Environment variables table.
+14. ✅ Tests — Added `getEditorSessionHash` tests to `hostname.test.ts` and config default tests to `config.test.ts`. All 269 tests pass (226 router + 43 app + 13 plugin). Typecheck and build pass cleanly.
+
+**Decisions made during implementation:**
+- The editor server uses `fileURLToPath(import.meta.url)` to compute `__dirname` in ESM, keeping it fully ESM-compatible.
+- The `dev-proxy.ts` cache key was changed from `hash` to `${hash}:${remotePort}` so that concurrent port-forwards to different ports on the same pod don't collide.
+- `containerStatuses` was added to the `FakePod` type in `mock-k8s.ts` to accommodate the new editor container metadata.
+- The `config.test.ts` spawns new processes for each default-value assertion to avoid module-cache pollution; this pattern was followed for the three new config defaults.
+
+**Quality gates:**
+- `pnpm install` ✅
+- `pnpm run build` ✅
+- `pnpm run typecheck` ✅
+- `pnpm run test` ✅
 
 ## Commit
 ### Tasks

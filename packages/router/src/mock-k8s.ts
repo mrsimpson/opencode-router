@@ -53,7 +53,7 @@ function podName(hash: string) {
 // ---------------------------------------------------------------------------
 type KMeta = { name: string; namespace: string; labels: Record<string, string>; annotations: Record<string, string>; creationTimestamp?: string }
 type FakePVC = { metadata: KMeta; spec: object; status: { phase: string } }
-type FakePod = { metadata: Omit<KMeta, "creationTimestamp">; status: { phase: string; podIP?: string; conditions?: { type: string; status: string }[] } }
+type FakePod = { metadata: Omit<KMeta, "creationTimestamp">; status: { phase: string; podIP?: string; conditions?: { type: string; status: string }[]; containerStatuses?: { name: string; ready: boolean }[] } }
 type FakeSecret = { metadata: { name: string; namespace: string }; stringData: Record<string, string> }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +108,11 @@ function makeRunningPod(hash: string, email: string, repoUrl: string, branch: st
       phase: "Running",
       podIP: "127.0.0.1",
       conditions: [{ type: "Ready", status: "True" }],
+      containerStatuses: [
+        { name: "opencode", ready: true },
+        { name: "chromium", ready: true },
+        { name: "editor", ready: true },
+      ],
     },
   }
 }
