@@ -4,7 +4,7 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
-    "noEmit": true,
+    "noEmit": false,
     "moduleResolution": "bundler",
     "module": "ESNext",
     "target": "ESNext",

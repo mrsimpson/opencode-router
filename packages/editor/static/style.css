@@ -95,25 +95,82 @@ html, body {
   padding: 4px 6px;
 }
 
-#preview {
+#editor-pane {
   flex: 1;
-  overflow: auto;
-  padding: 16px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
-#preview-placeholder {
+#toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid #30363d;
+  background: #161b22;
+  flex-shrink: 0;
+}
+
+#file-label {
+  flex: 1;
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#save-status {
+  font-size: 0.8125rem;
+  color: #3fb950;
+  min-width: 80px;
+  text-align: right;
+}
+
+#save-status.error {
+  color: #f85149;
+}
+
+#save-btn {
+  padding: 6px 14px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  background: #21262d;
+  color: #c9d1d9;
+  cursor: pointer;
+}
+
+#save-btn:hover:not(:disabled) {
+  background: #30363d;
+  border-color: #8b949e;
+}
+
+#save-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#editor-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+#editor-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: #8b949e;
   font-size: 0.875rem;
-  margin: auto;
 }
 
-#preview-content {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.875rem;
-  line-height: 1.5;
+#editor {
+  display: none;
+  height: 100%;
+  width: 100%;
 }

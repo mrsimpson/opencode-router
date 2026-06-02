@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Editor</title>
   <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.47.0/min/vs/loader.js"></script>
+  <script>
+    require.config({
+      paths: {
+        'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.47.0/min/vs'
+      }
+    })
+  </script>
 </head>
 <body>
   <div class="layout">
@@ -12,9 +20,16 @@
       <div class="sidebar-header">Files</div>
       <ul id="file-tree" class="tree"></ul>
     </aside>
-    <main id="preview">
-      <div id="preview-placeholder">Select a file to preview</div>
-      <pre id="preview-content" hidden></pre>
+    <main id="editor-pane">
+      <div id="toolbar">
+        <span id="file-label">Select a file to edit</span>
+        <span id="save-status"></span>
+        <button id="save-btn" disabled>Save</button>
+      </div>
+      <div id="editor-container">
+        <div id="editor-placeholder">Select a file from the sidebar to open it in the editor.</div>
+        <div id="editor" style="height:100%"></div>
+      </div>
     </main>
   </div>
   <script src="app.js"></script>

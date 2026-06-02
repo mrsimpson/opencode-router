@@ -104,13 +104,17 @@ function jsonResponse(res: http.ServerResponse, status: number, payload: unknown
   res.end(JSON.stringify(payload))
 }
 
-const server = http.createServer((req, res) => {
-  const urlPath = req.url ?? "/"
+function readRequestBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    req.on("data", (chunk) => chunks.push(chunk))
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")))
+    req.on("error", reject)
+  })
+}
 
-  if (req.method !== "GET") {
-    res.writeHead(405, { "Content-Type": "text/plain" }).end("Method Not Allowed")
-    return
-  }
+const server = http.createServer(async (req, res) => {
+  const urlPath = req.url ?? "/"
 
   // Health check
   if (urlPath === "/health") {
@@ -123,7 +127,7 @@ const server = http.createServer((req, res) => {
     const parsed = new URL(req.url ?? "/", `http://localhost:${PORT}`)
 
     // List directory
-    if (parsed.pathname === "/api/files") {
+    if (req.method === "GET" && parsed.pathname === "/api/files") {
       const rawDir = parsed.searchParams.get("dir") ?? ""
       const resolvedDir = isPathWithinHome(rawDir)
       if (!resolvedDir) {
@@ -131,37 +135,35 @@ const server = http.createServer((req, res) => {
         return
       }
 
-      fs.promises
-        .readdir(resolvedDir, { withFileTypes: true })
-        .then(async (entries) => {
-          const limited = entries.slice(0, 1000)
-          const result = await Promise.all(
-            limited.map(async (dirent) => {
-              const type = dirent.isDirectory() ? "directory" : "file"
-              let size: number | undefined
-              if (type === "file") {
-                try {
-                  const stat = await fs.promises.stat(path.join(resolvedDir, dirent.name))
-                  size = stat.size
-                } catch {
-                  // ignore stat errors
-                }
+      try {
+        const entries = await fs.promises.readdir(resolvedDir, { withFileTypes: true })
+        const limited = entries.slice(0, 1000)
+        const result = await Promise.all(
+          limited.map(async (dirent) => {
+            const type = dirent.isDirectory() ? "directory" : "file"
+            let size: number | undefined
+            if (type === "file") {
+              try {
+                const stat = await fs.promises.stat(path.join(resolvedDir, dirent.name))
+                size = stat.size
+              } catch {
+                // ignore stat errors
               }
-              return { name: dirent.name, type, size }
-            })
-          )
-          jsonResponse(res, 200, result)
-        })
-        .catch((err) => {
-          const code = (err as NodeJS.ErrnoException).code
-          const status = code === "ENOENT" ? 404 : 500
-          jsonResponse(res, status, { error: (err as Error).message })
-        })
+            }
+            return { name: dirent.name, type, size }
+          })
+        )
+        jsonResponse(res, 200, result)
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        const status = code === "ENOENT" ? 404 : 500
+        jsonResponse(res, status, { error: (err as Error).message })
+      }
       return
     }
 
     // Read file
-    if (parsed.pathname.startsWith("/api/files/")) {
+    if (req.method === "GET" && parsed.pathname.startsWith("/api/files/")) {
       const rawPath = "/" + parsed.pathname.slice("/api/files/".length)
       const resolvedPath = isPathWithinHome(rawPath)
       if (!resolvedPath) {
@@ -169,33 +171,56 @@ const server = http.createServer((req, res) => {
         return
       }
 
-      fs.promises
-        .stat(resolvedPath)
-        .then((stat) => {
-          if (!stat.isFile()) {
-            jsonResponse(res, 400, { error: "Not a file" })
-            return
-          }
-          const ext = path.extname(resolvedPath).toLowerCase()
-          if (BINARY_EXTENSIONS.has(ext)) {
-            jsonResponse(res, 400, { error: "Binary file" })
-            return
-          }
-          return fs.promises.readFile(resolvedPath, "utf-8")
-        })
-        .then((content) => {
-          if (typeof content === "string") {
-            res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" })
-            res.end(content)
-          }
-        })
-        .catch((err) => {
-          const code = (err as NodeJS.ErrnoException).code
-          const status = code === "ENOENT" ? 404 : 500
-          jsonResponse(res, status, { error: (err as Error).message })
-        })
+      try {
+        const stat = await fs.promises.stat(resolvedPath)
+        if (!stat.isFile()) {
+          jsonResponse(res, 400, { error: "Not a file" })
+          return
+        }
+        const ext = path.extname(resolvedPath).toLowerCase()
+        if (BINARY_EXTENSIONS.has(ext)) {
+          jsonResponse(res, 400, { error: "Binary file" })
+          return
+        }
+        const content = await fs.promises.readFile(resolvedPath, "utf-8")
+        res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" })
+        res.end(content)
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        const status = code === "ENOENT" ? 404 : 500
+        jsonResponse(res, status, { error: (err as Error).message })
+      }
       return
     }
+
+    // Write file
+    if (req.method === "PUT" && parsed.pathname.startsWith("/api/files/")) {
+      const rawPath = "/" + parsed.pathname.slice("/api/files/".length)
+      const resolvedPath = isPathWithinHome(rawPath)
+      if (!resolvedPath) {
+        jsonResponse(res, 400, { error: "Invalid file path" })
+        return
+      }
+
+      try {
+        const body = await readRequestBody(req)
+        const parentDir = path.dirname(resolvedPath)
+        await fs.promises.mkdir(parentDir, { recursive: true })
+        await fs.promises.writeFile(resolvedPath, body, "utf-8")
+        jsonResponse(res, 200, { ok: true })
+      } catch (err) {
+        jsonResponse(res, 500, { error: (err as Error).message })
+      }
+      return
+    }
+
+    res.writeHead(405, { "Content-Type": "text/plain" }).end("Method Not Allowed")
+    return
+  }
+
+  if (req.method !== "GET") {
+    res.writeHead(405, { "Content-Type": "text/plain" }).end("Method Not Allowed")
+    return
   }
 
   // Static files

@@ -440,6 +440,7 @@ Enable users to manually edit files on the PVC that were manipulated by the AI a
 ### Tasks
 - [x] Slice 1: Router Routing + Minimal Editor Sidecar (Infrastructure)
 - [x] Slice 2: Read-Only File Browser
+- [x] Slice 3: Monaco Editor with Save
 
 ### Completed
 **Slice 1 — completed 2026-06-02**
@@ -500,12 +501,54 @@ Enable users to manually edit files on the PVC that were manipulated by the AI a
 - `pnpm run test` ✅ (269 tests pass: 226 router + 43 app + 13 plugin)
 - Smoke test ✅ (directory listing, file read, binary rejection, path traversal defense verified via curl)
 
+**Slice 3 — completed 2026-06-02**
+
+1. ✅ `packages/editor/src/server.ts` — Added `PUT /api/files/<path>` endpoint:
+   - Validates path using existing `isPathWithinHome` (same rules as Slice 2: resolve within `/home/opencode`, reject `..`).
+   - Reads request body, auto-creates parent directories with `fs.mkdir(..., { recursive: true })` **after** path validation.
+   - Writes file with `fs.writeFile` and returns `{ ok: true }` on success.
+   - Returns appropriate JSON error on failure (400 for invalid path, 500 for unexpected errors).
+   - Refactored API route handling to support async/await for cleaner PUT implementation.
+2. ✅ `packages/editor/static/index.html` — Integrated Monaco Editor:
+   - Loads `https://cdn.jsdelivr.net/npm/monaco-editor@0.47.0/min/vs/loader.js` and configures `require.config` with CDN path.
+   - Replaced preview pane with `<div id="editor" style="height:100%"></div>`.
+   - Added toolbar with file label, save status, and Save button.
+   - Kept file tree sidebar from Slice 2.
+3. ✅ `packages/editor/static/app.js` — Enhanced frontend:
+   - On file click: fetches content, creates Monaco model with detected language (via extension-to-language map), sets value in editor surface.
+   - Save button handler: reads current editor value and `PUT`s to `/api/files/<path>`. Shows status text ("Saved" or error) near Save button.
+   - Dirty indicator: asterisk in file label when content differs from saved. Uses `editor.onDidChangeModelContent`.
+   - Keyboard shortcut: `Ctrl+S` / `Cmd+S` triggers save and prevents default browser behavior.
+   - Language detection mapping includes all requested extensions: `.ts`, `.js`, `.json`, `.md`, `.py`, `.css`, `.html`, `.yaml`, `.yml`, `.sh`, `.go`, `.rs`, `.java`, `.c`, `.cpp`, `.h`, `.hpp`, `.xml`, `.sql`, `.dockerfile`, `.tf`.
+4. ✅ `packages/editor/static/style.css` — Updated styles for toolbar and Monaco editor container.
+
+**Bug fix discovered during Slice 3:**
+- The `packages/editor/tsconfig.json` had `"noEmit": true`, meaning `tsc` never produced `dist/server.js`. The `Dockerfile` expected `src/server.js` which didn't exist. **Resolution**: removed `"noEmit": true`, updated `package.json` build/start scripts, converted `Dockerfile` to a multi-stage build that compiles TypeScript in the builder stage and copies `dist/server.js` into the final image. Added `pnpm --filter ./packages/editor build` to root `package.json` `build` script and `typecheck` script for consistency.
+
+**Decisions made during implementation:**
+- The editor server was refactored from callback-style to async/await inside the request handler to cleanly support the new PUT endpoint alongside existing GET endpoints.
+- Monaco model is recreated on every file open (rather than reusing a single model) to keep language mode changes clean and prevent cross-file undo history pollution.
+- The save status indicator auto-clears after 3 seconds to avoid stale UI state.
+- The `editor` package was added to root `build` and `typecheck` scripts to ensure CI and local development catch editor compilation errors.
+
+**Quality gates:**
+- `pnpm install` ✅
+- `pnpm --filter ./packages/editor build` ✅ (`tsc` emits `dist/server.js`)
+- `pnpm run build` ✅ (router + app + editor)
+- `pnpm run typecheck` ✅ (router + app + plugin + editor)
+- `pnpm run test` ✅ (269 tests pass: 226 router + 43 app + 13 plugin)
+- Smoke test ✅ (PUT writes file, auto-creates parent dirs, path traversal rejected)
+
 ## Commit
 ### Tasks
-- [ ] Commit Slice 2 changes to `feat/lightweight-editor-sidecar`
+- [x] Commit all changes (Slice 1 + Slice 2 + Slice 3) to `feat/lightweight-editor-sidecar`
 
 ### Completed
-*None yet*
+*Commit hash to be added after push*
+
+---
+
+*This plan is maintained by the LLM. Tool responses provide guidance on which section to focus on and what tasks to work on.*
 
 
 

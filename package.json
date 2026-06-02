@@ -5,8 +5,8 @@
   "type": "module",
   "packageManager": "pnpm@10.0.0",
   "scripts": {
-    "build": "pnpm --filter ./packages/router build && pnpm --filter ./packages/app build",
-    "typecheck": "pnpm --filter ./packages/router typecheck && pnpm --filter ./packages/app typecheck && pnpm --filter ./packages/plugin typecheck",
+    "build": "pnpm --filter ./packages/router build && pnpm --filter ./packages/app build && pnpm --filter ./packages/editor build",
+    "typecheck": "pnpm --filter ./packages/router typecheck && pnpm --filter ./packages/app typecheck && pnpm --filter ./packages/plugin typecheck && pnpm --filter ./packages/editor typecheck",
     "lint": "pnpm run typecheck",
     "test": "pnpm -r test",
     "dev:router": "pnpm --filter ./packages/router dev",
