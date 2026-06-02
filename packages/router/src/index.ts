@@ -156,7 +156,7 @@ async function proxyToPod(
   const targetPort = port ?? config.opencodePort
   let target: string | null = null
   if (devProxy.enabled) {
-    target = await devProxy.target(hash)
+    target = await devProxy.target(hash, targetPort)
   } else {
     const ip = await getPodIP(hash)
     if (ip) target = `http://${ip}:${targetPort}`
