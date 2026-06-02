@@ -8,6 +8,7 @@ const __dirname = path.dirname(__filename)
 
 const PORT = Number(process.env.EDITOR_PORT ?? 7681)
 const STATIC_DIR = path.join(__dirname, "../static")
+const HOME_DIR = "/home/opencode"
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -21,9 +22,69 @@ const MIME_TYPES: Record<string, string> = {
   ".ico": "image/x-icon",
 }
 
+const BINARY_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".ico",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".otf",
+  ".eot",
+  ".mp3",
+  ".mp4",
+  ".wav",
+  ".ogg",
+  ".webm",
+  ".mkv",
+  ".avi",
+  ".mov",
+  ".zip",
+  ".tar",
+  ".gz",
+  ".bz2",
+  ".xz",
+  ".7z",
+  ".rar",
+  ".exe",
+  ".so",
+  ".dylib",
+  ".dll",
+  ".bin",
+  ".wasm",
+  ".pdf",
+  ".db",
+  ".sqlite",
+  ".sqlite3",
+  ".o",
+  ".a",
+  ".obj",
+  ".lib",
+  ".class",
+  ".jar",
+  ".pyc",
+  ".pyo",
+])
+
 function getMimeType(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase()
   return MIME_TYPES[ext] ?? "application/octet-stream"
+}
+
+function isPathWithinHome(requestedPath: string): string | null {
+  const parts = requestedPath.split(/[\\/]/).filter(Boolean)
+  if (parts.includes("..")) {
+    return null
+  }
+  const resolved = path.resolve(HOME_DIR, requestedPath)
+  const normalizedHome = path.normalize(HOME_DIR + path.sep)
+  const normalizedResolved = path.normalize(resolved + path.sep)
+  if (!normalizedResolved.startsWith(normalizedHome)) {
+    return null
+  }
+  return resolved
 }
 
 function serveFile(res: http.ServerResponse, filePath: string): void {
@@ -38,10 +99,14 @@ function serveFile(res: http.ServerResponse, filePath: string): void {
   })
 }
 
+function jsonResponse(res: http.ServerResponse, status: number, payload: unknown) {
+  res.writeHead(status, { "Content-Type": "application/json" })
+  res.end(JSON.stringify(payload))
+}
+
 const server = http.createServer((req, res) => {
   const urlPath = req.url ?? "/"
 
-  // Only support GET for Slice 1
   if (req.method !== "GET") {
     res.writeHead(405, { "Content-Type": "text/plain" }).end("Method Not Allowed")
     return
@@ -53,12 +118,91 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  // API routes
+  if (urlPath.startsWith("/api/files")) {
+    const parsed = new URL(req.url ?? "/", `http://localhost:${PORT}`)
+
+    // List directory
+    if (parsed.pathname === "/api/files") {
+      const rawDir = parsed.searchParams.get("dir") ?? ""
+      const resolvedDir = isPathWithinHome(rawDir)
+      if (!resolvedDir) {
+        jsonResponse(res, 400, { error: "Invalid directory path" })
+        return
+      }
+
+      fs.promises
+        .readdir(resolvedDir, { withFileTypes: true })
+        .then(async (entries) => {
+          const limited = entries.slice(0, 1000)
+          const result = await Promise.all(
+            limited.map(async (dirent) => {
+              const type = dirent.isDirectory() ? "directory" : "file"
+              let size: number | undefined
+              if (type === "file") {
+                try {
+                  const stat = await fs.promises.stat(path.join(resolvedDir, dirent.name))
+                  size = stat.size
+                } catch {
+                  // ignore stat errors
+                }
+              }
+              return { name: dirent.name, type, size }
+            })
+          )
+          jsonResponse(res, 200, result)
+        })
+        .catch((err) => {
+          const code = (err as NodeJS.ErrnoException).code
+          const status = code === "ENOENT" ? 404 : 500
+          jsonResponse(res, status, { error: (err as Error).message })
+        })
+      return
+    }
+
+    // Read file
+    if (parsed.pathname.startsWith("/api/files/")) {
+      const rawPath = "/" + parsed.pathname.slice("/api/files/".length)
+      const resolvedPath = isPathWithinHome(rawPath)
+      if (!resolvedPath) {
+        jsonResponse(res, 400, { error: "Invalid file path" })
+        return
+      }
+
+      fs.promises
+        .stat(resolvedPath)
+        .then((stat) => {
+          if (!stat.isFile()) {
+            jsonResponse(res, 400, { error: "Not a file" })
+            return
+          }
+          const ext = path.extname(resolvedPath).toLowerCase()
+          if (BINARY_EXTENSIONS.has(ext)) {
+            jsonResponse(res, 400, { error: "Binary file" })
+            return
+          }
+          return fs.promises.readFile(resolvedPath, "utf-8")
+        })
+        .then((content) => {
+          if (typeof content === "string") {
+            res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" })
+            res.end(content)
+          }
+        })
+        .catch((err) => {
+          const code = (err as NodeJS.ErrnoException).code
+          const status = code === "ENOENT" ? 404 : 500
+          jsonResponse(res, status, { error: (err as Error).message })
+        })
+      return
+    }
+  }
+
   // Static files
   let filePath: string
   if (urlPath === "/" || urlPath === "/index.html") {
     filePath = path.join(STATIC_DIR, "index.html")
   } else {
-    // Prevent path traversal
     const requested = path.normalize(urlPath).replace(/^(\.\.(\/|\\))+/, "")
     filePath = path.join(STATIC_DIR, requested)
     if (!filePath.startsWith(STATIC_DIR)) {

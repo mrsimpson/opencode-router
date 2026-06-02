@@ -4,34 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Editor</title>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      margin: 0;
-      background: #0d1117;
-      color: #c9d1d9;
-    }
-    .container {
-      text-align: center;
-    }
-    h1 {
-      font-size: 2rem;
-      font-weight: 400;
-      margin-bottom: 0.5rem;
-    }
-    p {
-      color: #8b949e;
-    }
-  </style>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="container">
-    <h1>Editor is online</h1>
-    <p>The lightweight editor sidecar is running.</p>
+  <div class="layout">
+    <aside id="sidebar">
+      <div class="sidebar-header">Files</div>
+      <ul id="file-tree" class="tree"></ul>
+    </aside>
+    <main id="preview">
+      <div id="preview-placeholder">Select a file to preview</div>
+      <pre id="preview-content" hidden></pre>
+    </main>
   </div>
+  <script src="app.js"></script>
 </body>
 </html>

@@ -1,0 +1,119 @@
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+  background: #0d1117;
+  color: #c9d1d9;
+}
+
+.layout {
+  display: flex;
+  height: 100vh;
+}
+
+#sidebar {
+  width: 280px;
+  flex-shrink: 0;
+  border-right: 1px solid #30363d;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.sidebar-header {
+  font-weight: 600;
+  margin-bottom: 8px;
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8b949e;
+}
+
+.tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree li {
+  margin: 0;
+  padding: 0;
+}
+
+.tree .entry {
+  display: flex;
+  align-items: center;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.875rem;
+}
+
+.tree .entry:hover {
+  background: #21262d;
+}
+
+.tree .entry.directory::before {
+  content: "▶";
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 0.625rem;
+  transition: transform 0.1s;
+  color: #8b949e;
+}
+
+.tree .entry.directory.expanded::before {
+  transform: rotate(90deg);
+}
+
+.tree .entry.file::before {
+  content: " ";
+  display: inline-block;
+  margin-right: 6px;
+  width: 0.625rem;
+}
+
+.tree .entry.binary {
+  color: #8b949e;
+  cursor: not-allowed;
+}
+
+.tree ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.tree .error {
+  color: #f85149;
+  font-size: 0.875rem;
+  padding: 4px 6px;
+}
+
+#preview {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+#preview-placeholder {
+  color: #8b949e;
+  font-size: 0.875rem;
+  margin: auto;
+}
+
+#preview-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}

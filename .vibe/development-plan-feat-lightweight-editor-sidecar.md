@@ -439,6 +439,7 @@ Enable users to manually edit files on the PVC that were manipulated by the AI a
 ## Implement
 ### Tasks
 - [x] Slice 1: Router Routing + Minimal Editor Sidecar (Infrastructure)
+- [x] Slice 2: Read-Only File Browser
 
 ### Completed
 **Slice 1 — completed 2026-06-02**
@@ -470,9 +471,38 @@ Enable users to manually edit files on the PVC that were manipulated by the AI a
 - `pnpm run typecheck` ✅
 - `pnpm run test` ✅
 
+**Slice 2 — completed 2026-06-02**
+
+1. ✅ `packages/editor/src/server.ts` — Added REST endpoints:
+   - `GET /api/files?dir=<path>` — validates `dir` is within `/home/opencode`, reads directory with `fs.readdir` (`withFileTypes: true`), caps entries at 1000, returns JSON array `{ name, type, size? }`.
+   - `GET /api/files/<path>` — validates path is within `/home/opencode`, detects binary files via extension blocklist, returns `400` for binaries or file content as `text/plain`.
+   - Path normalization uses `path.resolve("/home/opencode", requestedPath)`; rejects if result does not start with `/home/opencode`.
+   - Rejects `..` sequences before normalization as defense-in-depth.
+2. ✅ `packages/editor/static/index.html` — Replaced single-page confirmation with two-pane layout: left sidebar (`<ul>`/`<li>` tree) and right preview pane (`<pre>`). Links `app.js` and `style.css`.
+3. ✅ `packages/editor/static/app.js` — Vanilla JS file tree:
+   - Fetches `/api/files?dir=/home/opencode/repo` on load and renders recursively.
+   - Click directory → expand/collapse (fetches children on first expand).
+   - Click file → fetches content and displays in preview pane.
+   - Binary files are indicated in the tree (greyed out, non-clickable) and shown as "Binary file, cannot preview." if fetched.
+4. ✅ `packages/editor/static/style.css` — Basic flexbox layout, sidebar width 280px, clean dark theme, no external framework.
+
+**Decisions made during implementation:**
+- The `GET /api/files/<path>` endpoint strips the leading `/api/files/` prefix and prepends `/` to the remaining path so absolute file paths are correctly resolved against `/home/opencode`.
+- The `URL` constructor's built-in path normalization (resolving `..` and `.` segments) provides an additional layer of path-traversal defense before our explicit `isPathWithinHome` check.
+- Binary detection uses a pragmatic extension blocklist rather than MIME sniffing, keeping the server simple and dependency-free.
+- Frontend sorts directories first alphabetically, then files, for a familiar file-tree UX.
+
+**Quality gates:**
+- `pnpm install` ✅
+- `pnpm --filter ./packages/editor build` ✅ (TypeScript `tsc --noEmit` passes)
+- `pnpm run build` ✅ (router + app)
+- `pnpm run typecheck` ✅ (router + app + plugin)
+- `pnpm run test` ✅ (269 tests pass: 226 router + 43 app + 13 plugin)
+- Smoke test ✅ (directory listing, file read, binary rejection, path traversal defense verified via curl)
+
 ## Commit
 ### Tasks
-- [ ] *To be added when this phase becomes active*
+- [ ] Commit Slice 2 changes to `feat/lightweight-editor-sidecar`
 
 ### Completed
 *None yet*
