@@ -56,7 +56,9 @@ jobs:
         run: |
           VERSION=$(node -p "require('./packages/router/package.json').version")
           SHA_SHORT=${GITHUB_SHA::7}
-          TAG="${VERSION}-${GITHUB_REF_NAME}.${SHA_SHORT}"
+          # Sanitize branch name for Docker tag (replace / with -)
+          SAFE_REF=$(echo "${GITHUB_REF_NAME}" | tr '/' '-')
+          TAG="${VERSION}-${SAFE_REF}.${SHA_SHORT}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "image=${IMAGE_NAME}:${TAG}" >> $GITHUB_OUTPUT
@@ -93,7 +95,9 @@ jobs:
         run: |
           VERSION=$(node -p "require('./packages/editor/package.json').version")
           SHA_SHORT=${GITHUB_SHA::7}
-          TAG="${VERSION}-${GITHUB_REF_NAME}.${SHA_SHORT}"
+          # Sanitize branch name for Docker tag (replace / with -)
+          SAFE_REF=$(echo "${GITHUB_REF_NAME}" | tr '/' '-')
+          TAG="${VERSION}-${SAFE_REF}.${SHA_SHORT}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "image=${EDITOR_IMAGE_NAME}:${TAG}" >> $GITHUB_OUTPUT
