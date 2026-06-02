@@ -183,6 +183,25 @@ export function SessionItem(props: Props) {
                   {attachCopied() ? t("session.action.attachCopied") : t("session.action.attach")}
                 </button>
               </Show>
+              <Show when={props.session.state === "running" && props.session.editorUrl}>
+                <button
+                  class="text-13-medium rounded-lg flex-1"
+                  style={{
+                    background: "none",
+                    border: "1px solid var(--border-base)",
+                    cursor: "pointer",
+                    color: "var(--text-base)",
+                    "min-height": "44px",
+                    padding: "10px 16px",
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    window.open(props.session.editorUrl!, "_blank")
+                  }}
+                >
+                  {t("session.action.editor")}
+                </button>
+              </Show>
               <button
                 class="text-13-medium rounded-lg flex-1"
                 style={{

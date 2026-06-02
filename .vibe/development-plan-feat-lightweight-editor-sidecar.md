@@ -441,6 +441,7 @@ Enable users to manually edit files on the PVC that were manipulated by the AI a
 - [x] Slice 1: Router Routing + Minimal Editor Sidecar (Infrastructure)
 - [x] Slice 2: Read-Only File Browser
 - [x] Slice 3: Monaco Editor with Save
+- [x] Slice 4: App Frontend Integration
 
 ### Completed
 **Slice 1 — completed 2026-06-02**
@@ -538,6 +539,30 @@ Enable users to manually edit files on the PVC that were manipulated by the AI a
 - `pnpm run typecheck` ✅ (router + app + plugin + editor)
 - `pnpm run test` ✅ (269 tests pass: 226 router + 43 app + 13 plugin)
 - Smoke test ✅ (PUT writes file, auto-creates parent dirs, path traversal rejected)
+
+**Slice 4 — completed 2026-06-02**
+
+1. ✅ `packages/app/src/session-item.tsx` — Added "Open Editor" button:
+   - Placed in the expanded action-buttons row inside `<Show when={props.expanded}>`, between the "Attach" and "Terminate" buttons.
+   - Conditionally rendered only when `props.session.state === "running"` and `props.session.editorUrl` is truthy.
+   - On click: `window.open(props.session.editorUrl, "_blank")`.
+   - Uses outline button style (`background: none`, `border: 1px solid var(--border-base)`) to indicate secondary action.
+   - `e.stopPropagation()` prevents collapsing the detail panel.
+2. ✅ `packages/app/src/i18n/en.ts` — Added key `session.action.editor` with label "Open Editor".
+3. ✅ `packages/app/src/i18n/de.ts` — Added key `session.action.editor` with label "Editor öffnen".
+4. ✅ `packages/app/src/api.ts` — Already included `editorUrl: z.string().optional()` in `SessionSchema` from Slice 1; verified, no changes needed.
+5. ✅ `packages/router/src/pod-manager.ts` — Already included `editorUrl` in `SessionInfo` and `buildSessionInfo` from Slice 1; verified, no changes needed.
+6. ✅ Compact variant (`CompactSessionItem`) — No editor button added, as planned, to avoid sidebar clutter.
+
+**Decisions made during implementation:**
+- The "Open Editor" button uses the same outline style as the "Attach" button (rather than a filled primary style), maintaining visual hierarchy: Attach is primary, Editor is secondary, Terminate is destructive.
+- The button is only shown in the expanded detail panel, not in the compact sidebar variant, aligning with the design decision to keep the sidebar minimal.
+
+**Quality gates:**
+- `pnpm install` ✅
+- `pnpm run build` ✅ (router + app + editor)
+- `pnpm run typecheck` ✅ (router + app + plugin + editor)
+- `pnpm run test` ✅ (269 tests pass: 226 router + 43 app + 13 plugin)
 
 ## Commit
 ### Tasks

@@ -10,6 +10,7 @@ export const dict = {
   "session.action.cancel": "Cancel",
   "session.action.attach": "Attach ⌘",
   "session.action.attachCopied": "Copied to clipboard",
+  "session.action.editor": "Open Editor",
   "session.action.terminate": "Terminate",
   "session.action.terminating": "Terminating…",
   "session.terminate.title": "Terminate session?",
