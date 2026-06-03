@@ -1,7 +1,9 @@
 import fs from "node:fs"
 import path from "node:path"
+import stream from "node:stream"
+import * as k8s from "@kubernetes/client-node"
 import { config } from "./config.js"
-import { k8sApi } from "./pod-manager.js"
+import { k8sApi, getKubeConfig } from "./pod-manager.js"
 
 function hasCode(err: unknown): err is { code: number } {
   return typeof err === "object" && err !== null && "code" in err && typeof (err as Record<string, unknown>).code === "number"
@@ -10,77 +12,49 @@ function isNotFound(err: unknown): boolean {
   return hasCode(err) && err.code === 404
 }
 
-type AnySocket = any
-
-function getSocket(response: any): AnySocket {
-  if (response.socket) return response.socket
-  if (response.ws) return response.ws
-  return response
-}
-
 export async function archiveSession(hash: string, openCodeSessionId: string, podName: string, email: string): Promise<void> {
   const userDir = path.join(config.archiveDir, email)
   fs.mkdirSync(userDir, { recursive: true })
   const archivePath = path.join(userDir, `${hash}.json`)
 
-  const response = await (k8sApi as any).connectGetNamespacedPodExec({
-    name: podName,
-    namespace: config.namespace,
-    command: ["opencode", "export", openCodeSessionId],
-    container: "opencode",
-    stdout: true,
-    stderr: true,
-    tty: false,
-  })
-
-  const socket = getSocket(response)
+  const exec = new k8s.Exec(getKubeConfig())
   const fileStream = fs.createWriteStream(archivePath)
+  const stderrChunks: Buffer[] = []
+  const stderr = new stream.PassThrough()
+  stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk))
 
-  return new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
-      fileStream.end()
+      fileStream.destroy()
       reject(new Error(`Archive timed out after ${config.archiveTimeoutMs}ms`))
     }, config.archiveTimeoutMs)
 
-    socket.on("message", (data: Buffer | string | ArrayBuffer) => {
-      try {
-        if (typeof data === "string") {
-          fileStream.write(data)
-          return
-        }
-
-        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer)
-        if (buf.length === 0) return
-
-        const channel = buf[0]
-        const payload = buf.slice(1)
-
-        if (channel === 1) {
-          fileStream.write(payload)
-        } else if (channel === 2) {
-          console.error(`[archive] stderr for session: ${payload.toString("utf-8")}`)
-        } else if (channel === 3) {
+    exec
+      .exec(
+        config.namespace,
+        podName,
+        "opencode",
+        ["opencode", "export", openCodeSessionId],
+        fileStream,
+        stderr,
+        null,
+        false,
+        (status: k8s.V1Status) => {
           clearTimeout(timeout)
           fileStream.end()
-          reject(new Error(`Exec server error: ${payload.toString("utf-8")}`))
-          return
-        }
-      } catch (err) {
-        console.error("[archive] Error processing exec stream:", err)
-      }
-    })
-
-    socket.on("close", () => {
-      clearTimeout(timeout)
-      fileStream.end()
-      resolve()
-    })
-
-    socket.on("error", (err: Error) => {
-      clearTimeout(timeout)
-      fileStream.end()
-      reject(err)
-    })
+          if (status.status === "Success") {
+            resolve()
+          } else {
+            const stderrText = Buffer.concat(stderrChunks).toString("utf-8").trim()
+            reject(new Error(`Export command failed (${status.reason ?? status.status}): ${stderrText || status.message}`))
+          }
+        },
+      )
+      .catch((err) => {
+        clearTimeout(timeout)
+        fileStream.destroy()
+        reject(err)
+      })
   })
 }
 

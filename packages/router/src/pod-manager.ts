@@ -19,9 +19,10 @@ import { sessionsChangedBroadcaster as _sessionsChangedBroadcaster } from "./str
  * or the default kubeconfig (~/.kube/config / KUBECONFIG) otherwise.
  */
 let _k8sApi: k8s.CoreV1Api | null = null
+let _kubeConfig: k8s.KubeConfig | null = null
 
-function getK8sApi(): k8s.CoreV1Api {
-  if (_k8sApi) return _k8sApi
+function getKubeConfig(): k8s.KubeConfig {
+  if (_kubeConfig) return _kubeConfig
   const kc = new k8s.KubeConfig()
   // loadFromCluster() does not throw when not in a pod — it silently produces
   // an invalid config with server=undefined. Check for the SA token file first.
@@ -30,9 +31,18 @@ function getK8sApi(): k8s.CoreV1Api {
   } else {
     kc.loadFromDefault()
   }
-  _k8sApi = kc.makeApiClient(k8s.CoreV1Api)
+  _kubeConfig = kc
+  return _kubeConfig
+}
+
+function getK8sApi(): k8s.CoreV1Api {
+  if (_k8sApi) return _k8sApi
+  _k8sApi = getKubeConfig().makeApiClient(k8s.CoreV1Api)
   return _k8sApi
 }
+
+/** Exported for use by archive.ts to create Exec/Attach helpers with the same kubeconfig. */
+export { getKubeConfig }
 
 // Proxy object so all existing call sites (`k8sApi.someMethod(...)`) continue
 // to work without any changes — the real client is resolved on first property access.
