@@ -7,11 +7,18 @@
 When a session is terminated (DELETE /api/sessions/:hash), persist/export the session's data to a long-term storage volume mounted in the router pod, using the session hash as identifier. This allows users to analyze session data after a session has been destroyed.
 
 ## Key Decisions
-- Storage target: Local volume mounted in the router pod (path TBD, e.g. `/data/archives` or `/mnt/session-archives`).
-- Archive format: JSON export via `opencode export [sessionID]` CLI executed inside the session pod. The JSON output will be saved to the archive volume.
-- Synchronous archiving: Session termination will block until the archive/export completes.
-- Retention: Unlimited for now; archive files/directories named by session hash.
-- Authentication: Not needed; storage is a local K8s-mounted volume.
+ - Storage target: Local volume mounted in the router pod (path TBD, e.g. `/data/archives` or `/mnt/session-archives`).
+ - Archive format: JSON export via `opencode export [sessionID]` CLI executed inside the session pod. The JSON output will be saved to the archive volume.
+ - Synchronous archiving: Session termination will block until the archive/export completes.
+ - Retention: Unlimited for now; archive files/directories named by session hash.
+ - Authentication: Not needed; storage is a local K8s-mounted volume.
+ - **Bug fix (Commit phase)**: Stopped sessions that lost their `bootstrappedSessions` entry (e.g., after `deleteIdlePods` or router restart) were skipped instead of being archived. Fixed by:
+   1. Persisting the bootstrapped sessionId in the PVC annotation `opencode.ai/session-id` when `bootstrapPodSession` succeeds
+   2. Backfilling the annotation in `getSessionInfo` when a running session's sessionId is discovered
+   3. Falling back to the PVC annotation in `terminateSession` for stopped sessions when `bootstrappedSessions` is empty
+   4. Clearing `bootstrappedSessions` in `resumeSession` so resumed pods get fresh sessions if needed
+ - **Test fix (Commit phase)**: `archiveSession` used `new k8s.Exec(getKubeConfig())` which tried to connect to a real K8s cluster in tests, causing failures in environments without a cluster. Fixed by making `archiveSession` accept an injectable `execImpl` (`_setExecImpl`) and injecting a mock in tests that delegates to `fakeK8sApi.connectGetNamespacedPodExec`.
+ - **Test fix (Commit phase)**: Archive tests ran in parallel, causing `config.archiveStrictMode` mutations in one test to leak into others. Fixed by wrapping the archive `describe` block in `describe.sequential()`.
 
 ## Notes
 - **Update**: Opencode provides a CLI command `opencode export [sessionID]` that exports session data as JSON. This is the preferred method over archiving raw PVC contents.
@@ -1133,20 +1140,24 @@ Leave the codebase cleaner than you found it.
 - [x] Dialog context bug fixed: terminate dialog no longer crashes on open
 - [x] Local dev bug fixed: archive export works out of the box without root permissions
 - [x] RBAC bug fixed: added `get` verb to `pods/exec` permission
-- [x] All tests pass (232 tests, 0 failures)
-- [x] Typecheck passes across all packages
+- [x] Stopped session bug fixed: archive stopped sessions by persisting sessionId to PVC annotation and falling back when bootstrappedSessions is empty
+- [x] Test infrastructure fixed: archiveSession accepts injectable execImpl so tests don't need a real K8s cluster
+- [x] Test isolation fixed: archive tests run sequentially to prevent config mutation leaks
+- [x] All tests pass (242 tests, 0 failures)
+- [x] Typecheck passes across router, app, and plugin
 - [x] Development plan finalized with all implementation decisions and test results
-- [x] Commit history cleaned up: 9 fine-grained commits squashed into 2 coarse-grained intent-based commits
+- [x] All changes committed; working tree is clean
 - [x] Ready to create PR and present final result to user
 
-### Commit History Cleanup
-**Before**: 9 commits (1 feat + 8 fix/refactor commits with overlapping concerns)
-**After**: 2 intent-based commits
+### Final Commit History
 
 | Commit | Intent | Contains |
 |---|---|---|
 | `feat(router): archive session data on termination` | Core router feature | All router code, config, docs, tests, security fix, naming refactor, local dev fix, RBAC fix |
 | `fix(app,ui): replace Kobalte dialog with native <dialog> and fix delete button` | UI fixes discovered during testing | Dialog replacement, native `<dialog>` components, optimistic delete, @opencode-ai/ui dep removal |
+| `fix(archive): use Exec helper for pod exec instead of raw HTTP API` | K8s exec API refinement | Switched from raw WebSocket to `k8s.Exec` helper for cleaner stream handling |
+| `fix: preserve checked out branch on resume` | Session resume reliability | Clears bootstrappedSessions cache on resume to prevent stale session IDs |
+| `fix(router): archive stopped sessions via PVC annotation and fix test infrastructure` | Commit-phase bug fixes | PVC annotation persistence/fallback, stopped session archive, injectable execImpl, sequential tests, development plan updates |
 
 
 

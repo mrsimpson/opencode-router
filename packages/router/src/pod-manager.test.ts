@@ -1757,10 +1757,10 @@ describe("deleteUserSecret", () => {
   })
 })
 
-describe("terminateSession — archive on termination", () => {
+describe.sequential("terminateSession — archive on termination", () => {
   const ARCHIVE_DIR = "/tmp/test-archives-slice1"
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Clean up archive dir
     try {
       const fs = require("node:fs")
@@ -1768,6 +1768,37 @@ describe("terminateSession — archive on termination", () => {
         fs.rmSync(ARCHIVE_DIR, { recursive: true })
       }
     } catch {}
+
+    // Reset strict mode to prevent cross-test pollution
+    const { config: testConfig } = await import("./config.js")
+    testConfig.archiveStrictMode = false
+
+    // Inject mock exec implementation so archiveSession doesn't need a real k8s cluster
+    const { _setExecImpl } = await import("./archive.js")
+    _setExecImpl(async (_namespace, podName, _containerName, command, stdout, _stderr, _stdin, _tty, statusCallback) => {
+      const result = await (fakeK8sApi as any).connectGetNamespacedPodExec({ name: podName, command })
+      const ws = result.socket || result.ws || result
+
+      return new Promise((resolve, reject) => {
+        ws.on("open", () => {})
+        ws.on("message", (msg: Buffer) => {
+          // Strip channel byte (1 = stdout)
+          if (msg[0] === 1) {
+            stdout.write(msg.slice(1))
+          }
+        })
+        ws.on("close", () => {
+          stdout.end()
+          if (statusCallback) {
+            statusCallback({ status: "Success", reason: "", message: "" } as any)
+          }
+          resolve(ws)
+        })
+        ws.on("error", (err: any) => {
+          reject(err)
+        })
+      })
+    })
   })
 
   afterEach(() => {

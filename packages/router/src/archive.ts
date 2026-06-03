@@ -12,12 +12,33 @@ function isNotFound(err: unknown): boolean {
   return hasCode(err) && err.code === 404
 }
 
+type ExecFn = (
+  namespace: string,
+  podName: string,
+  containerName: string,
+  command: string[],
+  stdout: stream.Writable,
+  stderr: stream.Writable,
+  stdin: stream.Readable | null,
+  tty: boolean,
+  statusCallback: (status: k8s.V1Status) => void,
+) => Promise<unknown>
+
+let execImpl: ExecFn = async (namespace, podName, containerName, command, stdout, stderr, stdin, tty, statusCallback) => {
+  const exec = new k8s.Exec(getKubeConfig())
+  return exec.exec(namespace, podName, containerName, command, stdout, stderr, stdin, tty, statusCallback)
+}
+
+/** Test-only: override the exec implementation. */
+export function _setExecImpl(fn: ExecFn) {
+  execImpl = fn
+}
+
 export async function archiveSession(hash: string, openCodeSessionId: string, podName: string, email: string): Promise<void> {
   const userDir = path.join(config.archiveDir, email)
   fs.mkdirSync(userDir, { recursive: true })
   const archivePath = path.join(userDir, `${hash}.json`)
 
-  const exec = new k8s.Exec(getKubeConfig())
   const fileStream = fs.createWriteStream(archivePath)
   const stderrChunks: Buffer[] = []
   const stderr = new stream.PassThrough()
@@ -29,27 +50,26 @@ export async function archiveSession(hash: string, openCodeSessionId: string, po
       reject(new Error(`Archive timed out after ${config.archiveTimeoutMs}ms`))
     }, config.archiveTimeoutMs)
 
-    exec
-      .exec(
-        config.namespace,
-        podName,
-        "opencode",
-        ["opencode", "export", openCodeSessionId],
-        fileStream,
-        stderr,
-        null,
-        false,
-        (status: k8s.V1Status) => {
-          clearTimeout(timeout)
-          fileStream.end()
-          if (status.status === "Success") {
-            resolve()
-          } else {
-            const stderrText = Buffer.concat(stderrChunks).toString("utf-8").trim()
-            reject(new Error(`Export command failed (${status.reason ?? status.status}): ${stderrText || status.message}`))
-          }
-        },
-      )
+    execImpl(
+      config.namespace,
+      podName,
+      "opencode",
+      ["opencode", "export", openCodeSessionId],
+      fileStream,
+      stderr,
+      null,
+      false,
+      (status: k8s.V1Status) => {
+        clearTimeout(timeout)
+        fileStream.end()
+        if (status.status === "Success") {
+          resolve()
+        } else {
+          const stderrText = Buffer.concat(stderrChunks).toString("utf-8").trim()
+          reject(new Error(`Export command failed (${status.reason ?? status.status}): ${stderrText || status.message}`))
+        }
+      },
+    )
       .catch((err) => {
         clearTimeout(timeout)
         fileStream.destroy()

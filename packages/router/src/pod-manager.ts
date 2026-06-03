@@ -121,6 +121,7 @@ const ANNOTATION_INITIAL_MESSAGE = "opencode.ai/initial-message"
 const ANNOTATION_CREATED_AT = "opencode.ai/created-at"
 const ANNOTATION_POD_SECRET = "opencode.ai/pod-secret"
 const ANNOTATION_ATTACH_PASSWORD = "opencode.ai/attach-password"
+const ANNOTATION_SESSION_ID = "opencode.ai/session-id"
 const LABEL_EXPORT_POD = "opencode.ai/export-pod"
 
 /** In-memory throttle for annotation updates: hash → last update epoch ms */
@@ -192,6 +193,8 @@ export interface SessionInfo {
   attachPassword?: string
   /** Editor URL for the web-based file editor (e.g., https://editor-<hash>.<domain>) */
   editorUrl?: string
+  /** The opencode session ID (bootstrapped or discovered from a running pod), if known. */
+  sessionId?: string
 }
 
 /**
@@ -230,6 +233,7 @@ async function buildSessionInfo(
   let lastActivity = annotationActivity
   const initialMessage = ann[ANNOTATION_INITIAL_MESSAGE]
   let sessionUrl: string | null = null
+  let sessionId: string | undefined
 
   if (state === "running" && pod?.status?.podIP) {
     const activity = await podActivityMs(pod.status.podIP, hash)
@@ -240,6 +244,7 @@ async function buildSessionInfo(
       if (activity.sessionId) {
         // Existing sessions on the pod — link to the most recently active one.
         // This is the resume case: the PVC has sessions in SQLite from a prior run.
+        sessionId = activity.sessionId
         sessionUrl = deepLinkUrl(`${proto}://${hash}${config.routeSuffix}.${config.routerDomain}`, activity.sessionId)
       } else if (initialMessage) {
         // Fresh pod (no sessions yet) with an initialMessage — bootstrap a new session.
@@ -251,6 +256,7 @@ async function buildSessionInfo(
           if (proxyTarget) base = proxyTarget
         }
         const bootstrappedId = await bootstrapPodSession(base, hash, initialMessage)
+        sessionId = bootstrappedId ?? undefined
         sessionUrl = bootstrappedId
           ? deepLinkUrl(`${proto}://${hash}${config.routeSuffix}.${config.routerDomain}`, bootstrappedId)
           : null
@@ -287,6 +293,7 @@ async function buildSessionInfo(
     attachUrl,
     attachPassword,
     editorUrl,
+    sessionId,
   }
 }
 
@@ -313,7 +320,26 @@ export async function getSessionInfo(hash: string): Promise<SessionInfo | null> 
   }
 
   const email = pvc.metadata?.annotations?.[ANNOTATION_USER_EMAIL] ?? ""
-  return buildSessionInfo(hash, pvc, pod, email)
+  const sessionInfo = await buildSessionInfo(hash, pvc, pod, email)
+
+  // Backfill sessionId annotation on the PVC for archive resilience
+  if (sessionInfo.sessionId && pvc.metadata?.annotations?.[ANNOTATION_SESSION_ID] !== sessionInfo.sessionId) {
+    try {
+      await k8sApi.patchNamespacedPersistentVolumeClaim({
+        name: pvcName(hash),
+        namespace: config.namespace,
+        body: {
+          metadata: {
+            annotations: { [ANNOTATION_SESSION_ID]: sessionInfo.sessionId },
+          },
+        },
+      })
+    } catch (err) {
+      console.warn(`[archive] Failed to backfill PVC session-id annotation for ${hash}:`, err)
+    }
+  }
+
+  return sessionInfo
 }
 
 /**
@@ -573,6 +599,20 @@ function bootstrapPodSession(base: string, hash: string, initialMessage: string)
       if (!sessionId) {
         bootstrappedSessions.delete(hash)
         return null
+      }
+      // Persist sessionId to PVC annotation so it survives pod deletion and router restarts
+      try {
+        await k8sApi.patchNamespacedPersistentVolumeClaim({
+          name: pvcName(hash),
+          namespace: config.namespace,
+          body: {
+            metadata: {
+              annotations: { [ANNOTATION_SESSION_ID]: sessionId },
+            },
+          },
+        })
+      } catch (err) {
+        console.warn(`[archive] Failed to patch PVC session-id annotation for ${hash}:`, err)
       }
       const promptRes = await bootstrapFetchImpl(`${base}/session/${sessionId}/prompt_async`, {
         method: "POST",
@@ -1405,24 +1445,35 @@ export async function terminateSession(hash: string, email: string): Promise<voi
 
   // If pod was not running (or never existed), try stopped-session export
   if (!podExistsAndRunning) {
+    let openCodeSessionId: string | null = null
+
+    // Prefer in-memory cache (fastest)
     const sessionIdPromise = bootstrappedSessions.get(hash)
     if (sessionIdPromise) {
+      openCodeSessionId = await sessionIdPromise
+    }
+
+    // Fall back to PVC annotation (survives pod deletion and router restarts)
+    if (!openCodeSessionId) {
+      const sessionIdFromAnnotation = pvc.metadata?.annotations?.[ANNOTATION_SESSION_ID]
+      if (sessionIdFromAnnotation) {
+        openCodeSessionId = sessionIdFromAnnotation
+        console.log(`[archive] Using sessionId from PVC annotation for stopped session ${hash}`)
+      }
+    }
+
+    if (openCodeSessionId) {
       try {
-        const openCodeSessionId = await sessionIdPromise
-        if (openCodeSessionId) {
-          console.log(`[archive] Starting export for session ${hash} (stopped pod, temp pod, openCodeSessionId=${openCodeSessionId})`)
-          const { archiveStoppedSession } = await import("./archive.js")
-          await archiveStoppedSession(hash, openCodeSessionId, email)
-          console.log(`[archive] Export success for session ${hash} (stopped pod)`)
-        } else {
-          console.log(`[archive] Export skipped for session ${hash}: bootstrap returned null openCodeSessionId`)
-        }
+        console.log(`[archive] Starting export for session ${hash} (stopped pod, temp pod, openCodeSessionId=${openCodeSessionId})`)
+        const { archiveStoppedSession } = await import("./archive.js")
+        await archiveStoppedSession(hash, openCodeSessionId, email)
+        console.log(`[archive] Export success for session ${hash} (stopped pod)`)
       } catch (err) {
         console.error(`[archive] Export failed for session ${hash} (stopped pod):`, err)
         if (config.archiveStrictMode) throw err
       }
     } else {
-      console.log(`[archive] Export skipped for session ${hash}: no bootstrapped session (stopped pod)`)
+      console.log(`[archive] Export skipped for session ${hash}: no bootstrapped session or PVC annotation (stopped pod)`)
     }
   }
 
@@ -1483,6 +1534,8 @@ export async function resumeSession(
 
   if (githubToken) await ensureGithubTokenSecret(hash, githubToken)
   if (userSecrets) await ensureUserSecret(email, userSecrets)
+  // Clear in-memory bootstrap cache so a resumed pod gets a fresh session if needed
+  bootstrappedSessions.delete(hash)
   await ensurePod(hash, session, githubToken, undefined, userSecrets)
   emitSessionsChanged()
 }
