@@ -758,12 +758,14 @@ describe("GET /api/user/repos", () => {
         full_name: "org/repo-a",
         html_url: "https://github.com/org/repo-a",
         private: false,
+        default_branch: "main",
       },
       {
         name: "repo-b",
         full_name: "org/repo-b",
         html_url: "https://github.com/org/repo-b",
         private: true,
+        default_branch: "main",
       },
     ]
     const page2Repos = [
@@ -772,12 +774,14 @@ describe("GET /api/user/repos", () => {
         full_name: "org/repo-a", // duplicate
         html_url: "https://github.com/org/repo-a",
         private: false,
+        default_branch: "main",
       },
       {
         name: "repo-c",
         full_name: "org/repo-c",
         html_url: "https://github.com/org/repo-c",
         private: false,
+        default_branch: "main",
       },
     ]
 
@@ -785,21 +789,21 @@ describe("GET /api/user/repos", () => {
     const nextLink = "<https://api.github.com/user/repos?page=2>" + "; rel=\"next\""
     globalThis.fetch = vi.fn(() => {
       callCount++
-      if (callCount === 1) {
+      if (callCount <= 2) {
+        // Personal repos pagination (2 pages)
         return Promise.resolve({
           ok: true,
           headers: {
-            get: (name: string) => (name === "link" ? nextLink : null),
+            get: (name: string) => (name === "link" && callCount === 1 ? nextLink : null),
           },
-          json: () => Promise.resolve(page1Repos),
+          json: () => Promise.resolve(callCount === 1 ? page1Repos : page2Repos),
         } as Response)
       }
+      // Orgs list (empty, so no org repos fetched)
       return Promise.resolve({
         ok: true,
-        headers: {
-          get: (name: string) => null, // no next page
-        },
-        json: () => Promise.resolve(page2Repos),
+        headers: { get: () => null },
+        json: () => Promise.resolve([]),
       } as Response)
     })
 
@@ -815,8 +819,8 @@ describe("GET /api/user/repos", () => {
     expect(body.map((r: any) => r.fullName)).toContain("org/repo-a")
     expect(body.map((r: any) => r.fullName)).toContain("org/repo-b")
     expect(body.map((r: any) => r.fullName)).toContain("org/repo-c")
-    // Should have fetched 2 pages
-    expect(callCount).toBe(2)
+    // Should have fetched 3 calls: 2 pages of personal repos + 1 orgs list
+    expect(callCount).toBe(3)
   })
 
   it("includes type=all in the GitHub API query", async () => {
@@ -839,6 +843,282 @@ describe("GET /api/user/repos", () => {
       expect.stringContaining("type=all"),
       expect.any(Object),
     )
+  })
+
+  it("includes org repos alongside personal repos", async () => {
+    const mockOrgs = [{ login: "my-org" }]
+    const personalRepos = [
+      {
+        name: "personal-repo",
+        full_name: "user/personal-repo",
+        html_url: "https://github.com/user/personal-repo",
+        private: false,
+        default_branch: "main",
+      },
+    ]
+    const orgRepos = [
+      {
+        name: "org-repo",
+        full_name: "my-org/org-repo",
+        html_url: "https://github.com/my-org/org-repo",
+        private: false,
+        default_branch: "main",
+      },
+    ]
+
+    let callCount = 0
+    globalThis.fetch = vi.fn(() => {
+      callCount++
+      if (callCount === 1) {
+        // First call: personal repos
+        return Promise.resolve({
+          ok: true,
+          headers: { get: () => null },
+          json: () => Promise.resolve(personalRepos),
+        } as Response)
+      }
+      if (callCount === 2) {
+        // Second call: user orgs
+        return Promise.resolve({
+          ok: true,
+          headers: { get: () => null },
+          json: () => Promise.resolve(mockOrgs),
+        } as Response)
+      }
+      // Third call: org repos
+      return Promise.resolve({
+        ok: true,
+        headers: { get: () => null },
+        json: () => Promise.resolve(orgRepos),
+      } as Response)
+    })
+
+    const req = fakeReq("GET", "/api/user/repos")
+    const res = fakeRes()
+
+    await handleApi(req as any, res as any, EMAIL, "gho_test_token")
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body).toHaveLength(2)
+    expect(body.map((r: any) => r.fullName)).toContain("user/personal-repo")
+    expect(body.map((r: any) => r.fullName)).toContain("my-org/org-repo")
+  })
+
+  it("deduplicates repos when same repo appears in both personal and org lists", async () => {
+    const mockOrgs = [{ login: "my-org" }]
+    const personalRepos = [
+      {
+        name: "shared-repo",
+        full_name: "my-org/shared-repo",
+        html_url: "https://github.com/my-org/shared-repo",
+        private: false,
+        default_branch: "main",
+      },
+    ]
+    const orgRepos = [
+      {
+        name: "shared-repo",
+        full_name: "my-org/shared-repo",
+        html_url: "https://github.com/my-org/shared-repo",
+        private: true,
+        default_branch: "develop",
+      },
+    ]
+
+    let callCount = 0
+    globalThis.fetch = vi.fn(() => {
+      callCount++
+      if (callCount === 1) {
+        return Promise.resolve({
+          ok: true,
+          headers: { get: () => null },
+          json: () => Promise.resolve(personalRepos),
+        } as Response)
+      }
+      if (callCount === 2) {
+        return Promise.resolve({
+          ok: true,
+          headers: { get: () => null },
+          json: () => Promise.resolve(mockOrgs),
+        } as Response)
+      }
+      return Promise.resolve({
+        ok: true,
+        headers: { get: () => null },
+        json: () => Promise.resolve(orgRepos),
+      } as Response)
+    })
+
+    const req = fakeReq("GET", "/api/user/repos")
+    const res = fakeRes()
+
+    await handleApi(req as any, res as any, EMAIL, "gho_test_token")
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    // Should be deduplicated to 1 repo (personal takes precedence)
+    expect(body).toHaveLength(1)
+    expect(body[0].fullName).toBe("my-org/shared-repo")
+    expect(body[0].isPrivate).toBe(false) // personal repo's private flag wins
+  })
+
+  it("works when user has no organizations", async () => {
+    const personalRepos = [
+      {
+        name: "personal-repo",
+        full_name: "user/personal-repo",
+        html_url: "https://github.com/user/personal-repo",
+        private: false,
+        default_branch: "main",
+      },
+    ]
+
+    let callCount = 0
+    globalThis.fetch = vi.fn(() => {
+      callCount++
+      if (callCount === 1) {
+        return Promise.resolve({
+          ok: true,
+          headers: { get: () => null },
+          json: () => Promise.resolve(personalRepos),
+        } as Response)
+      }
+      // Second call: empty orgs list
+      return Promise.resolve({
+        ok: true,
+        headers: { get: () => null },
+        json: () => Promise.resolve([]),
+      } as Response)
+    })
+
+    const req = fakeReq("GET", "/api/user/repos")
+    const res = fakeRes()
+
+    await handleApi(req as any, res as any, EMAIL, "gho_test_token")
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body).toHaveLength(1)
+    expect(body[0].fullName).toBe("user/personal-repo")
+  })
+
+  it("gracefully handles org API failure and still returns personal repos", async () => {
+    const personalRepos = [
+      {
+        name: "personal-repo",
+        full_name: "user/personal-repo",
+        html_url: "https://github.com/user/personal-repo",
+        private: false,
+        default_branch: "main",
+      },
+    ]
+
+    let callCount = 0
+    globalThis.fetch = vi.fn(() => {
+      callCount++
+      if (callCount === 1) {
+        return Promise.resolve({
+          ok: true,
+          headers: { get: () => null },
+          json: () => Promise.resolve(personalRepos),
+        } as Response)
+      }
+      // Second call: orgs API fails
+      return Promise.resolve({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve("Internal Server Error"),
+      } as Response)
+    })
+
+    const req = fakeReq("GET", "/api/user/repos")
+    const res = fakeRes()
+
+    await handleApi(req as any, res as any, EMAIL, "gho_test_token")
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body).toHaveLength(1)
+    expect(body[0].fullName).toBe("user/personal-repo")
+  })
+
+  it("gracefully handles individual org repo fetch failure", async () => {
+    const mockOrgs = [{ login: "org-a" }, { login: "org-b" }]
+    const personalRepos = [
+      {
+        name: "personal-repo",
+        full_name: "user/personal-repo",
+        html_url: "https://github.com/user/personal-repo",
+        private: false,
+        default_branch: "main",
+      },
+    ]
+    const orgARepos = [
+      {
+        name: "org-a-repo",
+        full_name: "org-a/org-a-repo",
+        html_url: "https://github.com/org-a/org-a-repo",
+        private: false,
+        default_branch: "main",
+      },
+    ]
+    const orgBRepos = [
+      {
+        name: "org-b-repo",
+        full_name: "org-b/org-b-repo",
+        html_url: "https://github.com/org-b/org-b-repo",
+        private: false,
+        default_branch: "main",
+      },
+    ]
+
+    let callCount = 0
+    globalThis.fetch = vi.fn(() => {
+      callCount++
+      if (callCount === 1) {
+        // Personal repos
+        return Promise.resolve({
+          ok: true,
+          headers: { get: () => null },
+          json: () => Promise.resolve(personalRepos),
+        } as Response)
+      }
+      if (callCount === 2) {
+        // Orgs list
+        return Promise.resolve({
+          ok: true,
+          headers: { get: () => null },
+          json: () => Promise.resolve(mockOrgs),
+        } as Response)
+      }
+      if (callCount === 3) {
+        // Org A repos
+        return Promise.resolve({
+          ok: true,
+          headers: { get: () => null },
+          json: () => Promise.resolve(orgARepos),
+        } as Response)
+      }
+      // Org B repos fails
+      return Promise.resolve({
+        ok: false,
+        status: 404,
+        text: () => Promise.resolve("Not Found"),
+      } as Response)
+    })
+
+    const req = fakeReq("GET", "/api/user/repos")
+    const res = fakeRes()
+
+    await handleApi(req as any, res as any, EMAIL, "gho_test_token")
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    // Should have personal + org-a repos (org-b failed but was skipped)
+    expect(body).toHaveLength(2)
+    expect(body.map((r: any) => r.fullName)).toContain("user/personal-repo")
+    expect(body.map((r: any) => r.fullName)).toContain("org-a/org-a-repo")
   })
 })
 

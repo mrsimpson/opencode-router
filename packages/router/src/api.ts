@@ -561,11 +561,78 @@ export async function handleApi(
   }
 
   // GET /api/user/repos — list repositories for authenticated user via GitHub API
+  // Includes both personal repos and repos from organizations the user belongs to.
   if (url === "/api/user/repos" && req.method === "GET") {
     if (!githubToken) {
       json(res, 401, { error: "GitHub token required" })
       return true
     }
+
+    const apiHeaders = {
+      Authorization: `Bearer ${githubToken}`,
+      Accept: "application/vnd.github.v3+json",
+      "User-Agent": "opencode-router",
+    }
+
+    // Helper: paginate through a GitHub API URL and collect all results
+    // Returns { repos, status } so the caller can inspect the HTTP status code
+    async function paginateRepos(url: string): Promise<{
+      repos: {
+        name: string
+        full_name: string
+        html_url: string
+        private: boolean
+        default_branch: string
+      }[]
+      status: number
+    }> {
+      const allRepos: {
+        name: string
+        full_name: string
+        html_url: string
+        private: boolean
+        default_branch: string
+      }[] = []
+      let nextUrl: string | undefined = url
+      let page = 0
+      let lastStatus = 200
+
+      while (nextUrl) {
+        const reposRes = await fetch(nextUrl, { headers: apiHeaders })
+        lastStatus = reposRes.status
+        if (!reposRes.ok) {
+          const err = await reposRes.text()
+          throw { status: reposRes.status, message: `GitHub API error (${reposRes.status}): ${err}` }
+        }
+        const repos = (await reposRes.json()) as {
+          name: string
+          full_name: string
+          html_url: string
+          private: boolean
+          default_branch: string
+        }[]
+        allRepos.push(...repos)
+
+        // Parse Link header for pagination
+        const linkHeader = reposRes.headers.get("link")
+        nextUrl = undefined
+        if (linkHeader) {
+          const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/)
+          if (nextMatch) {
+            nextUrl = nextMatch[1]
+          }
+        }
+
+        page++
+        if (page > 50) {
+          // Safety limit to prevent infinite loops
+          break
+        }
+      }
+
+      return { repos: allRepos, status: lastStatus }
+    }
+
     try {
       const allRepos = new Map<string, {
         name: string
@@ -575,48 +642,48 @@ export async function handleApi(
         default_branch: string
       }>()
 
-      let url: string | undefined = "https://api.github.com/user/repos?per_page=100&sort=updated&type=all"
-      let page = 0
-
-      while (url) {
-        const reposRes = await fetch(url, {
-          headers: {
-            Authorization: `Bearer ${githubToken}`,
-            Accept: "application/vnd.github.v3+json",
-            "User-Agent": "opencode-router",
-          },
-        })
-        if (!reposRes.ok) {
-          const err = await reposRes.text()
-          json(res, reposRes.status, { error: err })
-          return true
-        }
-        const repos = (await reposRes.json()) as {
-          name: string
-          full_name: string
-          html_url: string
-          private: boolean
-          default_branch: string
-        }[]
-        for (const r of repos) {
+      // 1. Fetch personal repos
+      let personalStatus = 200
+      try {
+        const { repos: personalRepos, status } = await paginateRepos("https://api.github.com/user/repos?per_page=100&sort=updated&type=all")
+        personalStatus = status
+        for (const r of personalRepos) {
           allRepos.set(r.full_name, r)
         }
+      } catch (err) {
+        // If personal repos API fails, propagate the status code
+        if (typeof err === "object" && err !== null && "status" in err && typeof (err as any).status === "number") {
+          json(res, (err as any).status, { error: `GitHub API error (${(err as any).status})` })
+          return true
+        }
+        throw err
+      }
 
-        // Parse Link header for pagination
-        const linkHeader = reposRes.headers.get("link")
-        url = undefined
-        if (linkHeader) {
-          const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/)
-          if (nextMatch) {
-            url = nextMatch[1]
+      // 2. Fetch org repos
+      try {
+        const orgsRes = await fetch("https://api.github.com/user/orgs?per_page=100", { headers: apiHeaders })
+        if (orgsRes.ok) {
+          const orgs = (await orgsRes.json()) as { login: string }[]
+          for (const org of orgs) {
+            try {
+              const { repos: orgRepos } = await paginateRepos(`https://api.github.com/orgs/${org.login}/repos?per_page=100&sort=updated&type=all`)
+              for (const r of orgRepos) {
+                // Only add if not already present (personal repos take precedence)
+                if (!allRepos.has(r.full_name)) {
+                  allRepos.set(r.full_name, r)
+                }
+              }
+            } catch (err) {
+              console.warn(`Failed to fetch repos for org "${org.login}":`, err)
+              // Skip this org and continue with others
+            }
           }
+        } else {
+          console.warn(`Failed to fetch user orgs (${orgsRes.status}), skipping org repos`)
         }
-
-        page++
-        if (page > 50) {
-          // Safety limit to prevent infinite loops
-          break
-        }
+      } catch (err) {
+        console.warn("Failed to fetch user orgs, continuing with personal repos only:", err)
+        // Graceful degradation: still return personal repos
       }
 
       const dedupedRepos = Array.from(allRepos.values())
