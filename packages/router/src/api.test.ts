@@ -1,10 +1,16 @@
 import { vi, describe, it, expect, beforeEach, afterAll } from "vitest"
 import { Readable } from "node:stream"
 import type http from "node:http"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 
 process.env.OPENCODE_IMAGE = "test"
 process.env.ROUTER_DOMAIN = "test.local"
 process.env.ADMIN_SECRET = "test-admin-secret"
+
+const archiveDir = fs.mkdtempSync(path.join(os.tmpdir(), "router-archive-test-"))
+process.env.ARCHIVE_DIR = archiveDir
 
 // ---------------------------------------------------------------------------
 // Mock pod-manager BEFORE importing api.ts
@@ -74,6 +80,14 @@ vi.doMock("./port-store.js", () => ({ portStore: portStoreMocks }))
 
 const { handleApi } = await import("./api.js")
 
+afterAll(() => {
+  try {
+    fs.rmSync(archiveDir, { recursive: true, force: true })
+  } catch {
+    // ignore cleanup errors
+  }
+})
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -117,6 +131,13 @@ function fakeRes(): {
 }
 
 const EMAIL = "user@example.com"
+
+function createMockArchive(hash: string, content: object, email: string = EMAIL) {
+  const userDir = path.join(archiveDir, email)
+  fs.mkdirSync(userDir, { recursive: true })
+  const filePath = path.join(userDir, `${hash}.json`)
+  fs.writeFileSync(filePath, JSON.stringify(content))
+}
 
 beforeEach(() => {
   mocks.listUserSessions.mockReset()
@@ -2175,5 +2196,135 @@ describe("DELETE /api/user/secret", () => {
     expect(res.statusCode).toBe(500)
     const body = JSON.parse(res.body)
     expect(body.error).toBe("Failed to delete secret")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// GET /api/archives — list archived sessions
+// ---------------------------------------------------------------------------
+
+describe("GET /api/archives", () => {
+  beforeEach(() => {
+    // Clean up all archive files between tests
+    const userDir = path.join(archiveDir, EMAIL)
+    if (fs.existsSync(userDir)) {
+      for (const file of fs.readdirSync(userDir)) {
+        fs.unlinkSync(path.join(userDir, file))
+      }
+    }
+  })
+
+  it("returns empty array when no archives exist", async () => {
+    const req = fakeReq("GET", "/api/archives")
+    const res = fakeRes()
+
+    const handled = await handleApi(req as any, res as any, EMAIL)
+
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.archives).toEqual([])
+  })
+
+  it("returns archives with metadata sorted by createdAt descending", async () => {
+    createMockArchive("abc123456789", { sessionId: "sess-1" })
+    createMockArchive("def987654321", { sessionId: "sess-2" })
+
+    const req = fakeReq("GET", "/api/archives")
+    const res = fakeRes()
+
+    const handled = await handleApi(req as any, res as any, EMAIL)
+
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.archives).toHaveLength(2)
+    const hashes = body.archives.map((a: any) => a.hash)
+    expect(hashes).toContain("abc123456789")
+    expect(hashes).toContain("def987654321")
+    expect(typeof body.archives[0].createdAt).toBe("string")
+    expect(typeof body.archives[0].sizeBytes).toBe("number")
+  })
+
+  it("does not list another user's archives", async () => {
+    const otherEmail = "other@example.com"
+    createMockArchive("abc123456789", { sessionId: "sess-other" }, otherEmail)
+
+    const req = fakeReq("GET", "/api/archives")
+    const res = fakeRes()
+
+    const handled = await handleApi(req as any, res as any, EMAIL)
+
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body)
+    expect(body.archives).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// GET /api/archives/:hash — retrieve a specific archive JSON
+// ---------------------------------------------------------------------------
+
+describe("GET /api/archives/:hash", () => {
+  beforeEach(() => {
+    const userDir = path.join(archiveDir, EMAIL)
+    if (fs.existsSync(userDir)) {
+      for (const file of fs.readdirSync(userDir)) {
+        fs.unlinkSync(path.join(userDir, file))
+      }
+    }
+  })
+
+  it("returns raw JSON for existing archive", async () => {
+    createMockArchive("abc123456789", { exported: true, sessionId: "sess-1" })
+
+    const req = fakeReq("GET", "/api/archives/abc123456789")
+    const res = fakeRes()
+
+    const handled = await handleApi(req as any, res as any, EMAIL)
+
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(200)
+    expect(res.headers["Content-Type"]).toBe("application/json")
+    const body = JSON.parse(res.body)
+    expect(body.exported).toBe(true)
+    expect(body.sessionId).toBe("sess-1")
+  })
+
+  it("returns 404 for non-existent archive", async () => {
+    const req = fakeReq("GET", "/api/archives/000000000000")
+    const res = fakeRes()
+
+    const handled = await handleApi(req as any, res as any, EMAIL)
+
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(404)
+    const body = JSON.parse(res.body)
+    expect(body.error).toBe("Archive not found")
+  })
+
+  it("returns false (not handled) for invalid hash format", async () => {
+    const req = fakeReq("GET", "/api/archives/invalid-hash")
+    const res = fakeRes()
+
+    const handled = await handleApi(req as any, res as any, EMAIL)
+
+    expect(handled).toBe(false)
+  })
+
+  it("returns 404 when accessing another user's archive", async () => {
+    const otherEmail = "other@example.com"
+    createMockArchive("abc123456789", { exported: true, sessionId: "sess-other" }, otherEmail)
+
+    const req = fakeReq("GET", "/api/archives/abc123456789")
+    const res = fakeRes()
+
+    const handled = await handleApi(req as any, res as any, EMAIL)
+
+    expect(handled).toBe(true)
+    expect(res.statusCode).toBe(404)
+    const body = JSON.parse(res.body)
+    expect(body.error).toBe("Archive not found")
   })
 })

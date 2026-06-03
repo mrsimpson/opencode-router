@@ -525,6 +525,41 @@ export async function handleApi(
     return true
   }
 
+  // GET /api/archives — list all archived sessions
+  if (url === "/api/archives" && req.method === "GET") {
+    try {
+      const { listArchives } = await import("./archive.js")
+      const archives = listArchives(email)
+      json(res, 200, { archives })
+    } catch (err) {
+      console.error("listArchives failed:", err)
+      json(res, 500, { error: "Failed to list archives" })
+    }
+    return true
+  }
+
+  // GET /api/archives/:hash — retrieve a specific archive JSON
+  const archiveMatch = url.match(/^\/api\/archives\/([a-f0-9]{12})$/)
+  if (archiveMatch && req.method === "GET") {
+    const hash = archiveMatch[1]
+    try {
+      const { readArchive } = await import("./archive.js")
+      const result = readArchive(hash, email)
+      if (result.exists) {
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Content-Length": String(result.sizeBytes),
+        }).end(result.data)
+      } else {
+        json(res, 404, { error: "Archive not found" })
+      }
+    } catch (err) {
+      console.error(`readArchive failed for ${hash}:`, err)
+      json(res, 500, { error: "Failed to read archive" })
+    }
+    return true
+  }
+
   // GET /api/user/repos — list repositories for authenticated user via GitHub API
   if (url === "/api/user/repos" && req.method === "GET") {
     if (!githubToken) {

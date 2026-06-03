@@ -111,6 +111,7 @@ const ANNOTATION_INITIAL_MESSAGE = "opencode.ai/initial-message"
 const ANNOTATION_CREATED_AT = "opencode.ai/created-at"
 const ANNOTATION_POD_SECRET = "opencode.ai/pod-secret"
 const ANNOTATION_ATTACH_PASSWORD = "opencode.ai/attach-password"
+const LABEL_EXPORT_POD = "opencode.ai/export-pod"
 
 /** In-memory throttle for annotation updates: hash → last update epoch ms */
 const activityThrottle = new Map<string, number>()
@@ -422,6 +423,21 @@ function podName(hash: string): string {
 
 function pvcName(hash: string): string {
   return `opencode-pvc-${hash}`
+}
+
+async function waitForPodDeletion(name: string, namespace: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      await k8sApi.readNamespacedPod({ name, namespace })
+      // Pod still exists, wait
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    } catch (err) {
+      if (isNotFound(err)) return // Pod is gone
+      throw err
+    }
+  }
+  console.warn(`[archive] Timeout waiting for pod ${name} deletion after ${timeoutMs}ms`)
 }
 
 function sessionLabels(hash: string): Record<string, string> {
@@ -927,6 +943,103 @@ export async function ensurePod(
   return hash
 }
 
+function buildExportPodManifest(hash: string, _session: SessionKey): k8s.V1Pod {
+  const containerImage = config.opencodeImage
+  const name = `opencode-session-${hash}-export`
+
+  // Minimal init container that just ensures the PVC is mounted
+  const initScript = `set -e\necho "Export pod ready"`
+
+  const secCtx: k8s.V1SecurityContext = {
+    runAsUser: 1000,
+    runAsGroup: 1000,
+    allowPrivilegeEscalation: false,
+    runAsNonRoot: true,
+    capabilities: { drop: ["ALL"] },
+    seccompProfile: { type: "RuntimeDefault" },
+  }
+
+  const initContainers: k8s.V1Container[] = [
+    {
+      name: "init",
+      securityContext: secCtx,
+      image: containerImage,
+      command: ["sh", "-c"],
+      args: [initScript],
+      volumeMounts: [
+        { name: "user-data", mountPath: "/home/opencode" },
+        { name: "user-data", mountPath: "/workspace", subPath: "repo" },
+      ],
+    },
+  ]
+
+  const pod: k8s.V1Pod = {
+    metadata: {
+      name,
+      namespace: config.namespace,
+      labels: {
+        ...sessionLabels(hash),
+        [LABEL_EXPORT_POD]: "true",
+      },
+      annotations: {
+        [ANNOTATION_LAST_ACTIVITY]: new Date().toISOString(),
+      },
+    },
+    spec: {
+      restartPolicy: "Never",
+      securityContext: {
+        runAsUser: 1000,
+        runAsGroup: 1000,
+        fsGroup: 1000,
+        runAsNonRoot: true,
+        seccompProfile: { type: "RuntimeDefault" },
+      },
+      ...(config.imagePullSecretName ? { imagePullSecrets: [{ name: config.imagePullSecretName }] } : {}),
+      initContainers,
+      containers: [
+        {
+          name: "opencode",
+          image: containerImage,
+          workingDir: "/home/opencode/repo",
+          command: ["sh", "-c", "sleep 3600"], // Keep alive so we can exec into it
+          env: [
+            { name: "OPENCODE_SESSION_HASH", value: hash },
+          ],
+          envFrom: [
+            { secretRef: { name: config.apiKeySecretName } },
+          ],
+          securityContext: {
+            allowPrivilegeEscalation: false,
+            runAsNonRoot: true,
+            capabilities: { drop: ["ALL"] },
+            seccompProfile: { type: "RuntimeDefault" },
+          },
+          volumeMounts: [
+            { name: "user-data", mountPath: "/home/opencode" },
+            { name: "opencode-config", mountPath: "/home/opencode/.opencode", readOnly: true },
+          ],
+          resources: {
+            requests: { cpu: "100m", memory: "128Mi" },
+            limits: { cpu: "200m", memory: "256Mi" },
+          },
+        },
+      ],
+      volumes: [
+        {
+          name: "user-data",
+          persistentVolumeClaim: { claimName: pvcName(hash) },
+        },
+        {
+          name: "opencode-config",
+          configMap: { name: config.configMapName },
+        },
+      ],
+    },
+  }
+
+  return pod
+}
+
 /**
  * Create PVC + Pod for a new session, guaranteeing both use the **same** hash.
  *
@@ -1199,10 +1312,76 @@ export async function terminateSession(hash: string, email: string): Promise<voi
   const owner = pvc.metadata?.annotations?.[ANNOTATION_USER_EMAIL]
   if (owner !== email) throw new Error("Forbidden")
 
+  // --- Export running pod before deletion ---
+  let podExistsAndRunning = false
+  try {
+    const pod = await k8sApi.readNamespacedPod({ name: podName(hash), namespace: config.namespace })
+    podExistsAndRunning = pod.status?.phase === "Running"
+  } catch (err) {
+    if (!isNotFound(err)) console.warn(`[archive] Failed to read pod ${hash} before export:`, err)
+  }
+
+  if (podExistsAndRunning) {
+    const sessionIdPromise = bootstrappedSessions.get(hash)
+    if (sessionIdPromise) {
+      try {
+        const openCodeSessionId = await sessionIdPromise
+        if (openCodeSessionId) {
+          console.log(`[archive] Starting export for session ${hash} (running pod, openCodeSessionId=${openCodeSessionId})`)
+          const { archiveSession } = await import("./archive.js")
+          await archiveSession(hash, openCodeSessionId, podName(hash), email)
+          console.log(`[archive] Export success for session ${hash}`)
+        } else {
+          console.log(`[archive] Export skipped for session ${hash}: bootstrap returned null openCodeSessionId`)
+        }
+      } catch (err) {
+        console.error(`[archive] Export failed for session ${hash}:`, err)
+        if (config.archiveStrictMode) throw err
+      }
+    } else {
+      console.log(`[archive] Export skipped for session ${hash}: no bootstrapped session`)
+    }
+  }
+  // --- Proceed with deletion ---
+
   // Delete pod if it exists (ignore NotFound)
   await k8sApi.deleteNamespacedPod({ name: podName(hash), namespace: config.namespace }).catch((err) => {
     if (!isNotFound(err)) throw err
   })
+
+  // Wait for original pod deletion if it was running (RWO PVC release)
+  if (podExistsAndRunning) {
+    try {
+      console.log(`[archive] Waiting for pod ${podName(hash)} deletion before proceeding...`)
+      await waitForPodDeletion(podName(hash), config.namespace, 30000)
+      console.log(`[archive] Pod ${podName(hash)} deletion confirmed`)
+    } catch (err) {
+      console.warn(`[archive] Error waiting for pod ${podName(hash)} deletion:`, err)
+    }
+  }
+
+  // If pod was not running (or never existed), try stopped-session export
+  if (!podExistsAndRunning) {
+    const sessionIdPromise = bootstrappedSessions.get(hash)
+    if (sessionIdPromise) {
+      try {
+        const openCodeSessionId = await sessionIdPromise
+        if (openCodeSessionId) {
+          console.log(`[archive] Starting export for session ${hash} (stopped pod, temp pod, openCodeSessionId=${openCodeSessionId})`)
+          const { archiveStoppedSession } = await import("./archive.js")
+          await archiveStoppedSession(hash, openCodeSessionId, email)
+          console.log(`[archive] Export success for session ${hash} (stopped pod)`)
+        } else {
+          console.log(`[archive] Export skipped for session ${hash}: bootstrap returned null openCodeSessionId`)
+        }
+      } catch (err) {
+        console.error(`[archive] Export failed for session ${hash} (stopped pod):`, err)
+        if (config.archiveStrictMode) throw err
+      }
+    } else {
+      console.log(`[archive] Export skipped for session ${hash}: no bootstrapped session (stopped pod)`)
+    }
+  }
 
   // Delete PVC
   await k8sApi.deleteNamespacedPersistentVolumeClaim({ name, namespace: config.namespace })
@@ -1219,6 +1398,10 @@ export async function terminateSession(hash: string, email: string): Promise<voi
   portStore.delete(hash)
   emitSessionsChanged()
 }
+
+export { k8sApi }
+export { isNotFound }
+export { buildExportPodManifest }
 
 /**
  * Resume a stopped session: recreate the pod for an existing PVC.

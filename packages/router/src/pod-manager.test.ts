@@ -1,9 +1,11 @@
-import { describe, it, expect, beforeEach, vi } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import path from "node:path"
 
 // Set required env vars before config module is loaded
 process.env.OPENCODE_IMAGE = "test"
 process.env.ROUTER_DOMAIN = "test.local"
 process.env.OPENCODE_ROUTER_EXTERNAL_DOMAIN = "test.local"
+process.env.ARCHIVE_DIR = "/tmp/test-archives-slice1"
 
 // ---------------------------------------------------------------------------
 // Store mocks — must be declared BEFORE the pod-manager module is imported
@@ -57,6 +59,18 @@ const fakeK8sApi = {
   createNamespacedPod: async ({ namespace, body }: { namespace: string; body: object }) => {
     createPodCalls.push({ namespace, body })
     fakePods = [...(fakePods as any[]), body]
+    // If this is an export pod, immediately transition to Running
+    const podName = (body as any).metadata?.name
+    if (podName?.endsWith("-export")) {
+      const pod = fakePods.find((p: any) => p.metadata?.name === podName)
+      if (pod) {
+        (pod as any).status = {
+          phase: "Running",
+          podIP: "127.0.0.1",
+          conditions: [{ type: "Ready", status: "True" }],
+        }
+      }
+    }
     return body
   },
   createNamespacedPersistentVolumeClaim: async ({ namespace, body }: { namespace: string; body: object }) => {
@@ -137,6 +151,25 @@ const fakeK8sApi = {
     }
     return s
   },
+  connectGetNamespacedPodExec: async ({ name, command }: { name: string; command: string[] }) => {
+    const hash = name.replace("opencode-session-", "")
+    const openCodeSessionId = command?.[2] ?? "mock-session"
+    const mockJson = JSON.stringify({ openCodeSessionId, exported: true, mock: true })
+    const encoder = new TextEncoder()
+    const payload = encoder.encode(mockJson)
+    // Prepend channel byte (1 = stdout) to each message
+    const msg = Buffer.concat([Buffer.from([1]), Buffer.from(payload)])
+
+    const mockWs = {
+      on(event: string, cb: Function) {
+        if (event === "open") setTimeout(() => cb(), 0)
+        if (event === "message") setTimeout(() => cb(msg), 0)
+        if (event === "close") setTimeout(() => cb(), 10)
+      },
+      close() {},
+    }
+    return { socket: mockWs, ws: mockWs }
+  },
 }
 
 // pod-manager.test.ts must run in its own vitest process (see package.json test script)
@@ -163,7 +196,7 @@ _setApiClient(fakeK8sApi as any)
 
 // --- Helpers ---
 
-function makePVC(sessionHash: string, email: string, repoUrl: string, branch: string, lastActivity?: string) {
+function makePVC(sessionHash: string, email: string, repoUrl: string, branch: string, lastActivity?: string, initialMessage?: string) {
   return {
     metadata: {
       name: `opencode-pvc-${sessionHash}`,
@@ -178,6 +211,7 @@ function makePVC(sessionHash: string, email: string, repoUrl: string, branch: st
         "opencode.ai/repo-url": repoUrl,
         "opencode.ai/branch": branch,
         ...(lastActivity ? { "opencode.ai/last-activity": lastActivity } : {}),
+        ...(initialMessage ? { "opencode.ai/initial-message": initialMessage } : {}),
       },
     },
     spec: {},
@@ -773,6 +807,7 @@ describe("prepullImage", () => {
 
     // Mock deleteNamespacedPod
     let podDeleted = false
+    const originalDeletePod = fakeK8sApi.deleteNamespacedPod
     fakeK8sApi.deleteNamespacedPod = async () => {
       podDeleted = true
       return {}
@@ -786,6 +821,7 @@ describe("prepullImage", () => {
     // Restore
     ;(globalThis as any).getSessionHash = originalGetSessionHash
     fakeK8sApi.readNamespacedPod = originalReadPod
+    fakeK8sApi.deleteNamespacedPod = originalDeletePod
   })
 
   it("returns false when pod never becomes ready (timeout)", async () => {
@@ -1718,5 +1754,325 @@ describe("deleteUserSecret", () => {
     await (deleteUserSecret as any)(email)
     // If we get here without an uncaught error, the test passes
     expect(true).toBe(true)
+  })
+})
+
+describe("terminateSession — archive on termination", () => {
+  const ARCHIVE_DIR = "/tmp/test-archives-slice1"
+
+  beforeEach(() => {
+    // Clean up archive dir
+    try {
+      const fs = require("node:fs")
+      if (fs.existsSync(ARCHIVE_DIR)) {
+        fs.rmSync(ARCHIVE_DIR, { recursive: true })
+      }
+    } catch {}
+  })
+
+  afterEach(() => {
+    try {
+      const fs = require("node:fs")
+      if (fs.existsSync(ARCHIVE_DIR)) {
+        fs.rmSync(ARCHIVE_DIR, { recursive: true })
+      }
+    } catch {}
+  })
+
+  it("archives running session before deletion when bootstrapped session exists", async () => {
+    fakePVCs = [makePVC(SESSION_HASH, EMAIL, REPO, BRANCH, undefined, "Build me an app")]
+    fakePods = [makeRunningPod(SESSION_HASH, EMAIL, REPO, BRANCH)]
+
+    // Set up a bootstrapped session
+    const { _setBootstrapFetch, _clearBootstrappedSessions } = await import("./pod-manager.js")
+    _clearBootstrappedSessions()
+    _setBootstrapFetch(async (url: string) => {
+      if (url.endsWith("/session")) {
+        return new Response(JSON.stringify({ id: "test-session-123" }), { status: 200 })
+      }
+      return new Response("{}", { status: 200 })
+    })
+
+    // Trigger bootstrap by getting session info
+    const { getSessionInfo } = await import("./pod-manager.js")
+    await getSessionInfo(SESSION_HASH)
+
+    // Now terminate
+    await (terminateSession as any)(SESSION_HASH, EMAIL)
+
+    // Pod and PVC should be deleted
+    expect(fakePods).toHaveLength(0)
+    expect(fakePVCs).toHaveLength(0)
+
+    // Archive should exist
+    const fs = await import("node:fs")
+    const archivePath = `${ARCHIVE_DIR}/${EMAIL}/${SESSION_HASH}.json`
+    expect(fs.existsSync(archivePath)).toBe(true)
+    const content = JSON.parse(fs.readFileSync(archivePath, "utf-8"))
+    expect(content.openCodeSessionId).toBe("test-session-123")
+  })
+
+  it("skips archive when no bootstrapped session exists", async () => {
+    fakePVCs = [makePVC(SESSION_HASH, EMAIL, REPO, BRANCH, undefined, "Build me an app")]
+    fakePods = [makeRunningPod(SESSION_HASH, EMAIL, REPO, BRANCH)]
+
+    const { _clearBootstrappedSessions } = await import("./pod-manager.js")
+    _clearBootstrappedSessions()
+
+    await (terminateSession as any)(SESSION_HASH, EMAIL)
+
+    expect(fakePods).toHaveLength(0)
+    expect(fakePVCs).toHaveLength(0)
+
+    const fs = await import("node:fs")
+    expect(fs.existsSync(`${ARCHIVE_DIR}/${EMAIL}/${SESSION_HASH}.json`)).toBe(false)
+  })
+
+  it("proceeds with deletion even if archive fails (strictMode=false)", async () => {
+    fakePVCs = [makePVC(SESSION_HASH, EMAIL, REPO, BRANCH, undefined, "Build me an app")]
+    fakePods = [makeRunningPod(SESSION_HASH, EMAIL, REPO, BRANCH)]
+
+    // Override exec to throw
+    const originalExec = (fakeK8sApi as any).connectGetNamespacedPodExec
+    ;(fakeK8sApi as any).connectGetNamespacedPodExec = async () => {
+      throw new Error("Simulated exec failure")
+    }
+
+    // Set up bootstrapped session
+    const { _setBootstrapFetch, _clearBootstrappedSessions } = await import("./pod-manager.js")
+    _clearBootstrappedSessions()
+    _setBootstrapFetch(async (url: string) => {
+      if (url.endsWith("/session")) {
+        return new Response(JSON.stringify({ id: "test-session-123" }), { status: 200 })
+      }
+      return new Response("{}", { status: 200 })
+    })
+
+    const { getSessionInfo } = await import("./pod-manager.js")
+    await getSessionInfo(SESSION_HASH)
+
+    // Should NOT throw
+    await (terminateSession as any)(SESSION_HASH, EMAIL)
+
+    // Deletion should still proceed
+    expect(fakePods).toHaveLength(0)
+    expect(fakePVCs).toHaveLength(0)
+
+    // Restore
+    ;(fakeK8sApi as any).connectGetNamespacedPodExec = originalExec
+  })
+
+  it("archives stopped session by creating temporary export pod", async () => {
+    fakePVCs = [makePVC(SESSION_HASH, EMAIL, REPO, BRANCH, undefined, "Build me an app")]
+    fakePods = [] // No running pod — stopped session
+
+    // Bootstrap first by temporarily creating a running pod
+    fakePods = [makeRunningPod(SESSION_HASH, EMAIL, REPO, BRANCH)]
+    const { getSessionInfo, _setBootstrapFetch, _clearBootstrappedSessions } = await import("./pod-manager.js")
+    _clearBootstrappedSessions()
+    _setBootstrapFetch(async (url: string) => {
+      if (url.endsWith("/session")) {
+        return new Response(JSON.stringify({ id: "test-session-123" }), { status: 200 })
+      }
+      return new Response("{}", { status: 200 })
+    })
+    await getSessionInfo(SESSION_HASH)
+
+    // Now remove the pod to simulate stopped state
+    fakePods = []
+
+    await (terminateSession as any)(SESSION_HASH, EMAIL)
+
+    // PVC and any temp pods should be deleted
+    expect(fakePVCs).toHaveLength(0)
+    expect(fakePods).toHaveLength(0)
+
+    // Archive should exist
+    const fs = await import("node:fs")
+    const archivePath = `${ARCHIVE_DIR}/${EMAIL}/${SESSION_HASH}.json`
+    expect(fs.existsSync(archivePath)).toBe(true)
+    const content = JSON.parse(fs.readFileSync(archivePath, "utf-8"))
+    expect(content.openCodeSessionId).toBe("test-session-123")
+  })
+
+  it("proceeds with PVC deletion even if temp pod archive fails (strictMode=false)", async () => {
+    fakePVCs = [makePVC(SESSION_HASH, EMAIL, REPO, BRANCH, undefined, "Build me an app")]
+    fakePods = []
+
+    // Bootstrap first
+    fakePods = [makeRunningPod(SESSION_HASH, EMAIL, REPO, BRANCH)]
+    const { getSessionInfo, _setBootstrapFetch, _clearBootstrappedSessions } = await import("./pod-manager.js")
+    _clearBootstrappedSessions()
+    _setBootstrapFetch(async (url: string) => {
+      if (url.endsWith("/session")) {
+        return new Response(JSON.stringify({ id: "test-session-123" }), { status: 200 })
+      }
+      return new Response("{}", { status: 200 })
+    })
+    await getSessionInfo(SESSION_HASH)
+    fakePods = []
+
+    // Override createNamespacedPod to fail for temp pods
+    const originalCreatePod = fakeK8sApi.createNamespacedPod
+    fakeK8sApi.createNamespacedPod = async () => {
+      throw new Error("Simulated temp pod creation failure")
+    }
+
+    await (terminateSession as any)(SESSION_HASH, EMAIL)
+
+    expect(fakePVCs).toHaveLength(0)
+    expect(fakePods).toHaveLength(0)
+
+    // Restore
+    fakeK8sApi.createNamespacedPod = originalCreatePod
+  })
+
+  it("blocks termination when archive fails and strictMode=true", async () => {
+    // Temporarily set strict mode
+    const { config: testConfig } = await import("./config.js")
+    const originalStrictMode = testConfig.archiveStrictMode
+    testConfig.archiveStrictMode = true
+
+    fakePVCs = [makePVC(SESSION_HASH, EMAIL, REPO, BRANCH, undefined, "Build me an app")]
+    fakePods = [makeRunningPod(SESSION_HASH, EMAIL, REPO, BRANCH)]
+
+    // Set up bootstrapped session
+    const { _setBootstrapFetch, _clearBootstrappedSessions } = await import("./pod-manager.js")
+    _clearBootstrappedSessions()
+    _setBootstrapFetch(async (url: string) => {
+      if (url.endsWith("/session")) {
+        return new Response(JSON.stringify({ id: "test-session-123" }), { status: 200 })
+      }
+      return new Response("{}", { status: 200 })
+    })
+
+    const { getSessionInfo } = await import("./pod-manager.js")
+    await getSessionInfo(SESSION_HASH)
+
+    // Override exec to throw
+    const originalExec = (fakeK8sApi as any).connectGetNamespacedPodExec
+    ;(fakeK8sApi as any).connectGetNamespacedPodExec = async () => {
+      throw new Error("Simulated exec failure")
+    }
+
+    // Should throw because strictMode=true
+    await expect((terminateSession as any)(SESSION_HASH, EMAIL)).rejects.toThrow("Simulated exec failure")
+
+    // Pod and PVC should NOT be deleted because termination was blocked
+    expect(fakePods).toHaveLength(1)
+    expect(fakePVCs).toHaveLength(1)
+
+    // Restore
+    ;(fakeK8sApi as any).connectGetNamespacedPodExec = originalExec
+    testConfig.archiveStrictMode = originalStrictMode
+  })
+
+  it("proceeds with deletion when exec times out", async () => {
+    fakePVCs = [makePVC(SESSION_HASH, EMAIL, REPO, BRANCH, undefined, "Build me an app")]
+    fakePods = [makeRunningPod(SESSION_HASH, EMAIL, REPO, BRANCH)]
+
+    // Set up bootstrapped session
+    const { _setBootstrapFetch, _clearBootstrappedSessions } = await import("./pod-manager.js")
+    _clearBootstrappedSessions()
+    _setBootstrapFetch(async (url: string) => {
+      if (url.endsWith("/session")) {
+        return new Response(JSON.stringify({ id: "test-session-123" }), { status: 200 })
+      }
+      return new Response("{}", { status: 200 })
+    })
+
+    const { getSessionInfo } = await import("./pod-manager.js")
+    await getSessionInfo(SESSION_HASH)
+
+    // Override exec to hang (never emits close)
+    const originalExec = (fakeK8sApi as any).connectGetNamespacedPodExec
+    ;(fakeK8sApi as any).connectGetNamespacedPodExec = async () => {
+      const mockWs = {
+        on(event: string, _cb: Function) {
+          if (event === "open") setTimeout(() => _cb(), 0)
+          // Never emit message or close → simulates a hang
+        },
+        close() {},
+      }
+      return { socket: mockWs, ws: mockWs }
+    }
+
+    // Shorten timeout
+    const { config: testConfig } = await import("./config.js")
+    const originalTimeout = testConfig.archiveTimeoutMs
+    testConfig.archiveTimeoutMs = 500
+
+    await (terminateSession as any)(SESSION_HASH, EMAIL)
+
+    // After timeout, deletion should still proceed
+    expect(fakePods).toHaveLength(0)
+    expect(fakePVCs).toHaveLength(0)
+
+    // Restore
+    ;(fakeK8sApi as any).connectGetNamespacedPodExec = originalExec
+    testConfig.archiveTimeoutMs = originalTimeout
+  })
+
+  it("proceeds with PVC deletion when temp pod never reaches Running", async () => {
+    fakePVCs = [makePVC(SESSION_HASH, EMAIL, REPO, BRANCH, undefined, "Build me an app")]
+    fakePods = []
+
+    // Bootstrap first by temporarily creating a running pod
+    fakePods = [makeRunningPod(SESSION_HASH, EMAIL, REPO, BRANCH)]
+    const { getSessionInfo, _setBootstrapFetch, _clearBootstrappedSessions } = await import("./pod-manager.js")
+    _clearBootstrappedSessions()
+    _setBootstrapFetch(async (url: string) => {
+      if (url.endsWith("/session")) {
+        return new Response(JSON.stringify({ id: "test-session-123" }), { status: 200 })
+      }
+      return new Response("{}", { status: 200 })
+    })
+    await getSessionInfo(SESSION_HASH)
+
+    // Now remove the pod to simulate stopped state
+    fakePods = []
+
+    // Override createNamespacedPod to create a pod that stays Pending
+    const originalCreatePod = fakeK8sApi.createNamespacedPod
+    ;(fakeK8sApi as any).createNamespacedPod = async ({ body }: any) => {
+      fakePods = [...(fakePods as any[]), body]
+      // Don't transition to Running — leave it Pending
+      return body
+    }
+
+    // Shorten temp pod timeout
+    const { config: testConfig } = await import("./config.js")
+    const originalTempTimeout = testConfig.archiveTempPodTimeoutMs
+    testConfig.archiveTempPodTimeoutMs = 500
+
+    await (terminateSession as any)(SESSION_HASH, EMAIL)
+
+    // PVC should be deleted even though temp pod timed out
+    expect(fakePVCs).toHaveLength(0)
+    // Temp pod should still be deleted (cleanup in finally)
+    expect(fakePods).toHaveLength(0)
+
+    // Archive should NOT exist
+    const fs = await import("node:fs")
+    expect(fs.existsSync(`${ARCHIVE_DIR}/${EMAIL}/${SESSION_HASH}.json`)).toBe(false)
+
+    // Restore
+    fakeK8sApi.createNamespacedPod = originalCreatePod
+    testConfig.archiveTempPodTimeoutMs = originalTempTimeout
+  })
+
+  it("skips archive when pod is Pending and proceeds with deletion", async () => {
+    fakePVCs = [makePVC(SESSION_HASH, EMAIL, REPO, BRANCH, undefined, "Build me an app")]
+    fakePods = [makePendingPod(SESSION_HASH, EMAIL, REPO, BRANCH)]
+
+    await (terminateSession as any)(SESSION_HASH, EMAIL)
+
+    // Pod and PVC should be deleted
+    expect(fakePods).toHaveLength(0)
+    expect(fakePVCs).toHaveLength(0)
+
+    // No archive should be written
+    const fs = await import("node:fs")
+    expect(fs.existsSync(`${ARCHIVE_DIR}/${EMAIL}/${SESSION_HASH}.json`)).toBe(false)
   })
 })

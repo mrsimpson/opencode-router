@@ -10,12 +10,14 @@ The opencode-router provides per-user isolated OpenCode instances on Kubernetes.
 Internet → Ingress → oauth2-proxy (authentication) → opencode-router → per-user Pod
 ```
 
-The router is a stateless Node.js process that:
+The router is a mostly stateless Node.js process that:
 - Reads the authenticated user's email from the `X-Auth-Request-Email` header
 - Serves a setup UI (SolidJS SPA) on first visit so the user can pick a git repo to clone
 - Provisions a PersistentVolumeClaim and Pod per user via the Kubernetes API
 - Proxies all HTTP and WebSocket traffic to the user's running Pod
 - Deletes idle Pods after a timeout (PVCs are preserved)
+
+The one local state exception is the `/data/history` volume used to store session archive JSON files exported before pod deletion.
 
 The router image includes the pre-built SPA in `/app/public/`. There is one Docker image for both the router and UI — no separate deployment for the frontend.
 
@@ -63,6 +65,9 @@ rules:
     resources: ["pods"]
     verbs: ["get", "list", "create", "delete", "patch"]
   - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
+  - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "create"]
   - apiGroups: [""]
@@ -90,6 +95,7 @@ roleRef:
 - `pods: create` — provision new user pods
 - `pods: delete` — delete idle pods during cleanup
 - `pods: patch` — update the `opencode.ai/last-activity` annotation on each proxied request (throttled to once/minute/user)
+- `pods/exec: create, get` — run `opencode export <sessionId>` inside session pods before deletion to archive session data (the k8s client uses GET for the WebSocket handshake)
 - `persistentvolumeclaims: get` — check if a user's PVC exists before creating
 - `persistentvolumeclaims: create` — provision PVCs for new users
 - `persistentvolumeclaims: list` — not strictly required currently but included for operational tooling
@@ -163,11 +169,17 @@ spec:
         app: opencode-router
     spec:
       serviceAccountName: opencode-router
+      volumes:
+        - name: session-history
+          emptyDir: {}
       containers:
         - name: router
           image: <your-registry>/opencode-router:latest  # See "Building the Image" below
           ports:
             - containerPort: 3000
+          volumeMounts:
+            - name: session-history
+              mountPath: /data/history
           env:
             - name: OPENCODE_IMAGE
               value: "<your-registry>/opencode:latest"
@@ -188,6 +200,8 @@ spec:
             #   value: "2Gi"
             # - name: DEFAULT_GIT_REPO
             #   value: ""              # if set, users skip the repo selection UI
+            # - name: ARCHIVE_DIR
+            #   value: "/data/history"  # must match the EmptyDir volumeMount path above
           resources:
             requests:
               cpu: 100m
@@ -229,10 +243,16 @@ spec:
 | `STORAGE_SIZE` | No | `2Gi` | Storage capacity per user PVC |
 | `DEFAULT_GIT_REPO` | No | — | If set, all users get this repo auto-cloned; the setup UI is skipped |
 | `PUBLIC_DIR` | No | `./public` | Path to the SPA assets directory (set automatically in the Docker image) |
+| `ARCHIVE_DIR` | No | `/data/history` | Directory where session archive JSON files are written |
+| `ARCHIVE_TIMEOUT_MS` | No | `30000` | Max time to wait for `opencode export` execution (ms) |
+| `ARCHIVE_STRICT_MODE` | No | `false` | If `true`, export failure throws and blocks termination |
+| `ARCHIVE_TEMP_POD_TIMEOUT_MS` | No | `120000` | Max time to wait for temporary export pod to reach Running state (ms) |
 
 ### Why 2 replicas
 
-The router is stateless — it discovers user Pods via the K8s API on every request. Multiple replicas provide availability. The only in-memory state is a throttle cache for activity annotations (once/min/user), which is non-critical — if a different replica handles the next request, it just writes the annotation slightly more often. No sticky sessions are needed.
+The router is mostly stateless — it discovers user Pods via the K8s API on every request. Multiple replicas provide availability. The only in-memory state is a throttle cache for activity annotations (once/min/user), which is non-critical — if a different replica handles the next request, it just writes the annotation slightly more often.
+
+**Exception:** Session archives are stored in an `EmptyDir` volume mounted at `/data/history`. This means archives are local to each replica — a user terminating on replica A and listing archives on replica B will not see the archive. If cross-replica archive visibility is required, use session affinity (sticky sessions) or migrate to a shared `ReadWriteMany` PVC.
 
 ### Resource sizing
 
