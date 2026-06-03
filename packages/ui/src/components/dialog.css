@@ -6,6 +6,20 @@
     background-color: hsl(from var(--background-base) h s l / 0.2);
   }
 
+  /* Reset native dialog element defaults so our layout CSS takes over */
+  dialog[data-component="dialog"] {
+    border: none;
+    padding: 0;
+    background: transparent;
+    max-width: none;
+    max-height: none;
+    overflow: visible;
+  }
+
+  dialog[data-component="dialog"]::backdrop {
+    display: none;
+  }
+
   [data-component="dialog"] {
     position: fixed;
     inset: 0;

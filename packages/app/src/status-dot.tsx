@@ -1,4 +1,4 @@
-import { Spinner } from "@opencode-ai/ui/spinner"
+import { Spinner } from "./ui/spinner"
 import type { Session } from "./api"
 
 export function StatusDot(props: { state: Session["state"] }) {

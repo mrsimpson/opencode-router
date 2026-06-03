@@ -1,6 +1,6 @@
 import { Match, Show, Switch, createSignal, onMount } from "solid-js"
-import { useI18n } from "@opencode-ai/ui/context"
-import { Button } from "@opencode-ai/ui/button"
+import { useI18n } from "./ui/context"
+import { Button } from "./ui/button"
 import { useT } from "./i18n"
 import { GIT_URL_PATTERN } from "./setup-form-utils"
 import { Autocomplete } from "./autocomplete"

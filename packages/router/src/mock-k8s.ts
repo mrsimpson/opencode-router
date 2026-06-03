@@ -11,6 +11,7 @@
  */
 
 import crypto from "node:crypto"
+import path from "node:path"
 
 // Set required env vars before config.ts is evaluated (uses required() which throws if absent)
 process.env.OPENCODE_IMAGE ??= "ghcr.io/mrsimpson/opencode:latest"
@@ -194,6 +195,20 @@ const fakeK8sApi = {
   },
   createNamespacedPod: async ({ body }: { namespace: string; body: FakePod }) => {
     fakePods.push(body)
+    // If this is an export pod, immediately transition to Running
+    if (body.metadata?.name?.endsWith("-export")) {
+      setTimeout(() => {
+        const pod = fakePods.find((p) => p.metadata.name === body.metadata.name)
+        if (pod) {
+          pod.status = {
+            phase: "Running",
+            podIP: "127.0.0.1",
+            conditions: [{ type: "Ready", status: "True" }],
+          }
+          console.log(`[mock-k8s] Export pod ${body.metadata.name} transitioned to Running`)
+        }
+      }, 100)
+    }
     return body
   },
   createNamespacedPersistentVolumeClaim: async ({ body }: { namespace: string; body: FakePVC }) => {
@@ -243,6 +258,54 @@ const fakeK8sApi = {
     if (!s) throw Object.assign(new Error("not found"), { code: 404 })
     return s
   },
+  connectGetNamespacedPodExec: async ({ name, command }: { name: string; command: string[] }) => {
+    const hash = name.replace("opencode-session-", "")
+    const { config } = await import("./config.js")
+    const archiveDir = config.archiveDir
+    const openCodeSessionId = command?.[2] ?? "mock-session"
+    const mockJson = JSON.stringify({ openCodeSessionId, exported: true, mock: true, timestamp: new Date().toISOString() })
+    const payload = Buffer.concat([Buffer.from([1]), Buffer.from(mockJson)])
+
+    const fs = await import("node:fs")
+    fs.mkdirSync(archiveDir, { recursive: true })
+
+    // Property-based injection for test/dev modes (prefer over env vars)
+    if (fakeK8sApi._execShouldFail) {
+      const mockWs = {
+        on(event: string, cb: Function) {
+          if (event === "open") setTimeout(() => cb(), 0)
+          if (event === "error") setTimeout(() => cb(new Error("MOCK_ARCHIVE_FAIL enabled")), 0)
+        },
+        close() {},
+      }
+      return { socket: mockWs, ws: mockWs }
+    }
+
+    if (fakeK8sApi._execShouldHang) {
+      const mockWs = {
+        on(event: string, cb: Function) {
+          if (event === "open") setTimeout(() => cb(), 0)
+          // Never emit message or close → simulates a hang
+        },
+        close() {},
+      }
+      return { socket: mockWs, ws: mockWs }
+    }
+
+    // Default success path
+    const mockWs = {
+      on(event: string, cb: Function) {
+        if (event === "open") setTimeout(() => cb(), 0)
+        if (event === "message") setTimeout(() => cb(payload), 0)
+        if (event === "close") setTimeout(() => cb(), 10)
+      },
+      close() {},
+    }
+
+    return { socket: mockWs, ws: mockWs }
+  },
+  _execShouldFail: false,
+  _execShouldHang: false,
 }
 
 // ---------------------------------------------------------------------------

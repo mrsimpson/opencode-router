@@ -1,6 +1,5 @@
-import { ComponentProps, JSXElement, ParentProps, Show, onMount } from "solid-js"
+import { type ComponentProps, type JSXElement, type ParentProps, Show, onMount } from "solid-js"
 import { Portal } from "solid-js/web"
-import { IconButton } from "./icon-button"
 
 export interface DialogProps extends ParentProps {
   title?: JSXElement
@@ -27,20 +26,6 @@ export function Dialog(props: DialogProps) {
     props.onClose?.()
   }
 
-  // Close when clicking the backdrop (native dialog backdrop click detection)
-  const handleClick = (e: MouseEvent) => {
-    if (!dialogRef) return
-    const rect = dialogRef.getBoundingClientRect()
-    const clickedInside =
-      rect.top <= e.clientY &&
-      e.clientY <= rect.top + rect.height &&
-      rect.left <= e.clientX &&
-      e.clientX <= rect.left + rect.width
-    if (!clickedInside) {
-      props.onClose?.()
-    }
-  }
-
   return (
     <Portal>
       <dialog
@@ -50,7 +35,6 @@ export function Dialog(props: DialogProps) {
         data-size={props.size || "normal"}
         data-transition={props.transition ? true : undefined}
         onCancel={handleCancel}
-        onClick={handleClick}
         style={{
           border: "none",
           padding: "0",
@@ -58,9 +42,18 @@ export function Dialog(props: DialogProps) {
           "max-width": "none",
           "max-height": "none",
           overflow: "visible",
+          /* Override browser default dialog positioning — fill viewport and flex-center content */
+          position: "fixed",
+          inset: "0",
+          width: "100vw",
+          height: "100vh",
+          display: "flex",
+          "align-items": "center",
+          "justify-content": "center",
+          margin: "0",
         }}
       >
-        {/* Overlay */}
+        {/* Dim overlay — clicking it closes the dialog */}
         <div
           data-slot="dialog-overlay"
           style={{
@@ -68,8 +61,10 @@ export function Dialog(props: DialogProps) {
             inset: "0",
             "z-index": "50",
             "background-color": "hsl(from var(--background-base) h s l / 0.2)",
+            "pointer-events": "auto",
+            cursor: "default",
           }}
-          onClick={(e) => { e.stopPropagation(); props.onClose?.() }}
+          onClick={() => props.onClose?.()}
         />
         <div data-slot="dialog-container">
           <div
@@ -84,7 +79,30 @@ export function Dialog(props: DialogProps) {
             <Show when={props.title}>
               <div data-slot="dialog-header">
                 <span data-slot="dialog-title">{props.title}</span>
-                <IconButton aria-label="Close" icon="close" size="small" onClick={() => props.onClose?.()} />
+                <button
+                  aria-label="Close"
+                  data-component="icon-button"
+                  data-size="small"
+                  data-variant="ghost"
+                  onClick={() => props.onClose?.()}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--icon-base)",
+                    display: "flex",
+                    "align-items": "center",
+                    "justify-content": "center",
+                    width: "24px",
+                    height: "24px",
+                    "border-radius": "4px",
+                    padding: "0",
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="square"/>
+                  </svg>
+                </button>
               </div>
             </Show>
             <Show when={props.description}>

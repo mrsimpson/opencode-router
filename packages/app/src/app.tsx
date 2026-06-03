@@ -1,8 +1,8 @@
-import { Button } from "@opencode-ai/ui/button"
-import { Dialog } from "@opencode-ai/ui/dialog"
-import { TextField } from "@opencode-ai/ui/text-field"
-import { Icon } from "@opencode-ai/ui/icon"
-import { useDialog, useI18n } from "@opencode-ai/ui/context"
+import { Button } from "./ui/button"
+import { Dialog } from "./ui/dialog"
+import { TextField } from "./ui/text-field"
+import { Icon } from "./ui/icon"
+import { useDialog, useI18n } from "./ui/context"
 import { Match, Show, Switch, createSignal, onCleanup, onMount, batch } from "solid-js"
 import {
   type Session,
@@ -36,8 +36,6 @@ export function App() {
   const [appPhase, setAppPhase] = createSignal<AppPhase>({ kind: "loading" })
   const [sessions, setSessions] = createSignal<Session[]>([])
   const [email, setEmail] = createSignal("")
-  const [terminating, setTerminating] = createSignal<Set<string>>(new Set())
-
   const [repoUrl, setRepoUrl] = createSignal("")
   const [sourceBranch, setSourceBranch] = createSignal("")
   const [sessionBranch, setSessionBranch] = createSignal("")
@@ -45,6 +43,7 @@ export function App() {
   const [promptText, setPromptText] = createSignal("")
   const [formError, setFormError] = createSignal("")
   const [submitting, setSubmitting] = createSignal(false)
+
 
   // Settings state - support multiple key-value pairs
   const [secretKeys, setSecretKeys] = createSignal<string[]>([])
@@ -75,7 +74,7 @@ export function App() {
       /* silent */
     }
     dialog.show(() => (
-      <Dialog fit title={t("settings.title")}>
+      <Dialog fit title={t("settings.title")} onClose={() => dialog.close()}>
         <div class="flex flex-col gap-4 p-4">
           <div>
             <h3 class="text-14-medium mb-1">{t("settings.apiKeys")}</h3>
@@ -360,7 +359,7 @@ export function App() {
     const hash = session.hash
     const repo = session.repoUrl.replace(/^https?:\/\//, "").replace(/\.git$/, "")
     dialog.show(() => (
-      <Dialog fit title={t("session.terminate.title")} description={t("session.terminate.description", { repo })}>
+      <Dialog fit title={t("session.terminate.title")} description={t("session.terminate.description", { repo })} onClose={() => dialog.close()}>
         <div class="flex justify-end gap-2 p-4 pt-2">
           <Button variant="secondary" size="small" onClick={() => dialog.close()}>
             {t("session.action.cancel")}
@@ -369,22 +368,20 @@ export function App() {
             variant="secondary"
             size="small"
             style={{ color: "var(--text-danger-base, #ef4444)" }}
-            onClick={async () => {
+            onClick={() => {
               dialog.close()
-              setTerminating((prev) => new Set([...prev, hash]))
-              await terminateSession(hash)
-              setTerminating((prev) => {
-                const next = new Set(prev)
-                next.delete(hash)
-                return next
-              })
+              // Optimistic removal — remove from UI immediately
+              setSessions((prev) => prev.filter((s) => s.hash !== hash))
               // If the terminated session was open, go back to ready
               const p = appPhase()
               if (p.kind === "open" && p.hash === hash) {
                 navigate("/")
                 setAppPhase({ kind: "ready" })
               }
-              // SSE stream will update session list automatically via sessionsChangedBroadcaster
+              // Fire-and-forget the API call in the background
+              terminateSession(hash).catch((err) => {
+                console.error("Failed to terminate session:", err)
+              })
             }}
           >
             {t("session.action.terminate")}
@@ -541,7 +538,6 @@ export function App() {
                 {/* Session list: always visible on all screen sizes */}
                 <SessionList
                   sessions={sessions()}
-                  terminating={terminating()}
                   onOpenSession={handleOpenSession}
                   onResumeSession={handleResumeSession}
                   onTerminateSession={handleTerminateSession}

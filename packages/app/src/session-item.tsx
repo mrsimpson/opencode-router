@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
-import { useI18n } from "@opencode-ai/ui/context"
+import { useI18n } from "./ui/context"
 import { Portal } from "solid-js/web"
 import type { Session, StoredMessage } from "./api"
 import { subscribeProgressStream } from "./api"

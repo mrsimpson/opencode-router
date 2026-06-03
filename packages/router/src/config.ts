@@ -111,4 +111,8 @@ export const config = {
   get adminSecret() {
     return process.env.ADMIN_SECRET
   },
+  archiveDir: process.env.ARCHIVE_DIR ?? new URL("../.local/history", import.meta.url).pathname,
+  archiveTimeoutMs: Number(process.env.ARCHIVE_TIMEOUT_MS ?? 30000),
+  archiveStrictMode: process.env.ARCHIVE_STRICT_MODE === "true",
+  archiveTempPodTimeoutMs: Number(process.env.ARCHIVE_TEMP_POD_TIMEOUT_MS ?? 120000),
 }

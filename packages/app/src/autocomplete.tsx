@@ -1,5 +1,5 @@
 import { createSignal, createEffect, Show, For, onCleanup, onMount } from "solid-js"
-import { useI18n } from "@opencode-ai/ui/context"
+import { useI18n } from "./ui/context"
 import type { Repo, Branch } from "./api"
 import { useT } from "./i18n"
 
