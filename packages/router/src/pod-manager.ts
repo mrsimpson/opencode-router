@@ -785,7 +785,7 @@ export async function ensurePod(
           `else`,
           `  $GIT fetch --all`,
           `  if $GIT rev-parse --verify "${branch}" >/dev/null 2>&1; then`,
-          `    $GIT checkout "${branch}"`,
+          `    $GIT checkout "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"`,
           `  else`,
           `    $GIT checkout -B "${sourceBranch}" "origin/${sourceBranch}"`,
           `    $GIT checkout -b "${branch}"`,
