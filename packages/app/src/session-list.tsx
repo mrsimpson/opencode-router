@@ -1,5 +1,5 @@
 import { For, Show, createMemo, createSignal } from "solid-js"
-import { useI18n } from "@opencode-ai/ui/context"
+import { useI18n } from "./ui/context"
 import type { Session } from "./api"
 import { useT } from "./i18n"
 import { SessionItem } from "./session-item"
@@ -7,7 +7,6 @@ import { sortedAndGroupedSessions } from "./session-utils"
 
 type Props = {
   sessions: Session[]
-  terminating: Set<string>
   onOpenSession: (session: Session) => void
   onResumeSession: (session: Session) => void
   onTerminateSession: (session: Session) => void

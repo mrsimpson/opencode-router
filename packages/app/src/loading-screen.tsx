@@ -1,5 +1,5 @@
 import { For, createSignal, onCleanup, onMount } from "solid-js"
-import { useI18n } from "@opencode-ai/ui/context"
+import { useI18n } from "./ui/context"
 import { subscribeSessionEvents } from "./api"
 import { useT } from "./i18n"
 

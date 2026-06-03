@@ -1,6 +1,6 @@
 import { For, Show, createMemo } from "solid-js"
-import { useI18n } from "@opencode-ai/ui/context"
-import { Button } from "@opencode-ai/ui/button"
+import { useI18n } from "./ui/context"
+import { Button } from "./ui/button"
 import type { Session } from "./api"
 import { useT } from "./i18n"
 import { SessionItem } from "./session-item"

@@ -1,0 +1,34 @@
+{
+  "conversationId": "opencode-router-fix-delete-button-native-dialog-aogag8",
+  "projectPath": "/Users/oliverjaegle/projects/privat/opencode-router",
+  "epicId": "opencode-router-2",
+  "phaseTasks": [
+    {
+      "phaseId": "reproduce",
+      "phaseName": "Reproduce",
+      "taskId": "opencode-router-2.1"
+    },
+    {
+      "phaseId": "analyze",
+      "phaseName": "Analyze",
+      "taskId": "opencode-router-2.2"
+    },
+    {
+      "phaseId": "fix",
+      "phaseName": "Fix",
+      "taskId": "opencode-router-2.3"
+    },
+    {
+      "phaseId": "verify",
+      "phaseName": "Verify",
+      "taskId": "opencode-router-2.4"
+    },
+    {
+      "phaseId": "finalize",
+      "phaseName": "Finalize",
+      "taskId": "opencode-router-2.5"
+    }
+  ],
+  "createdAt": "2026-06-02T16:16:08.276Z",
+  "updatedAt": "2026-06-02T16:16:08.276Z"
+}

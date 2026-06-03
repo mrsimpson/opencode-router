@@ -1136,7 +1136,17 @@ Leave the codebase cleaner than you found it.
 - [x] All tests pass (232 tests, 0 failures)
 - [x] Typecheck passes across all packages
 - [x] Development plan finalized with all implementation decisions and test results
+- [x] Commit history cleaned up: 9 fine-grained commits squashed into 2 coarse-grained intent-based commits
 - [x] Ready to create PR and present final result to user
+
+### Commit History Cleanup
+**Before**: 9 commits (1 feat + 8 fix/refactor commits with overlapping concerns)
+**After**: 2 intent-based commits
+
+| Commit | Intent | Contains |
+|---|---|---|
+| `feat(router): archive session data on termination` | Core router feature | All router code, config, docs, tests, security fix, naming refactor, local dev fix, RBAC fix |
+| `fix(app,ui): replace Kobalte dialog with native <dialog> and fix delete button` | UI fixes discovered during testing | Dialog replacement, native `<dialog>` components, optimistic delete, @opencode-ai/ui dep removal |
 
 
 

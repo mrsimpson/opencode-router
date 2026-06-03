@@ -18,7 +18,6 @@ function interpolate(value: string, params?: Record<string, string | number | bo
 
 export function createI18n(locale: string) {
   const dict = resolve(locale)
-  // key is typed as string (not DictKey) so this object satisfies UiI18n from @opencode-ai/ui
   const t = (key: string, params?: Record<string, string | number | boolean>): string =>
     interpolate(dict[key] ?? (en as Record<string, string>)[key] ?? key, params)
   return { locale: () => locale, t } as const
