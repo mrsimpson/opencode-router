@@ -29,6 +29,28 @@ export async function archiveSession(hash: string, openCodeSessionId: string, po
       reject(new Error(`Archive timed out after ${config.archiveTimeoutMs}ms`))
     }, config.archiveTimeoutMs)
 
+    let execStatus: k8s.V1Status | null = null
+
+    // Resolve/reject only once the fileStream has fully flushed to disk.
+    // The status callback fires synchronously inside the WebSocket message
+    // handler, before the fs.WriteStream has drained — so we must wait for
+    // the 'finish' event before settling the promise.
+    fileStream.on("finish", () => {
+      clearTimeout(timeout)
+      if (execStatus === null) return // shouldn't happen, but guard
+      if (execStatus.status === "Success") {
+        resolve()
+      } else {
+        const stderrText = Buffer.concat(stderrChunks).toString("utf-8").trim()
+        reject(new Error(`Export command failed (${execStatus.reason ?? execStatus.status}): ${stderrText || execStatus.message}`))
+      }
+    })
+
+    fileStream.on("error", (err) => {
+      clearTimeout(timeout)
+      reject(err)
+    })
+
     exec
       .exec(
         config.namespace,
@@ -40,13 +62,11 @@ export async function archiveSession(hash: string, openCodeSessionId: string, po
         null,
         false,
         (status: k8s.V1Status) => {
-          clearTimeout(timeout)
-          fileStream.end()
-          if (status.status === "Success") {
-            resolve()
-          } else {
-            const stderrText = Buffer.concat(stderrChunks).toString("utf-8").trim()
-            reject(new Error(`Export command failed (${status.reason ?? status.status}): ${stderrText || status.message}`))
+          // Store status; the WebSocket handler already called fileStream.end()
+          // before invoking this callback — wait for 'finish' to flush.
+          execStatus = status
+          if (status.status !== "Success") {
+            // end() was already called by the handler; just let 'finish' fire
           }
         },
       )
