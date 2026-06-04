@@ -83,6 +83,12 @@ export const config = {
    */
   opencodeRouterExternalDomain: process.env.OPENCODE_ROUTER_EXTERNAL_DOMAIN,
   /**
+   * In-cluster URL for pushing token metrics to VictoriaMetrics.
+   * When set, session pods push per-step token usage to this endpoint.
+   * Example: VICTORIA_METRICS_URL=http://victoria-metrics-server.observability.svc.cluster.local:8428
+   */
+  victoriaMetricsUrl: process.env.VICTORIA_METRICS_URL,
+  /**
    * Dev-only: when set, the router proxies the setup UI to this Vite dev server URL
    * instead of serving static files from publicDir. Enables HMR without a redirect loop.
    * Example: DEV_VITE_URL=http://localhost:5173

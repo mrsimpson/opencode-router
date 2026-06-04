@@ -79,6 +79,44 @@ async function runStartupReplay(input: Parameters<Plugin>[0]): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Token-metrics — push per-step token usage to VictoriaMetrics
+// ---------------------------------------------------------------------------
+
+const VM_URL = process.env.VICTORIA_METRICS_URL
+const USER_EMAIL = process.env.OPENCODE_USER_EMAIL ?? "unknown"
+
+function pushMetricsToVM(part: Record<string, any>): void {
+  if (!VM_URL) return
+
+  if (part.type !== "step-finish") return
+
+  const tokens = part.tokens ?? {}
+  const cost = part.cost ?? 0
+  const modelRaw: string = part.modelID ?? part.model ?? "unknown"
+  const slashIdx = modelRaw.indexOf("/")
+  const provider = slashIdx !== -1 ? modelRaw.slice(0, slashIdx) : "unknown"
+  const model = slashIdx !== -1 ? modelRaw.slice(slashIdx + 1) : modelRaw
+  const session: string = part.sessionID ?? "unknown"
+
+  const labels = `user="${USER_EMAIL}",model="${model}",provider="${provider}",session="${session}"`
+  const lines = [
+    `opencode_tokens_input_total{${labels}} ${tokens.input ?? 0}`,
+    `opencode_tokens_output_total{${labels}} ${tokens.output ?? 0}`,
+    `opencode_tokens_cache_read_total{${labels}} ${tokens.cache?.read ?? 0}`,
+    `opencode_tokens_cache_write_total{${labels}} ${tokens.cache?.write ?? 0}`,
+    `opencode_cost_usd_total{${labels}} ${cost}`,
+  ].join("\n")
+
+  fetch(`${VM_URL}/api/v1/import/prometheus`, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: lines,
+  }).catch((err) => {
+    console.warn("opencode-router-plugin: failed to push token metrics:", err)
+  })
+}
+
 const RouterPlugin: Plugin = async (input) => {
   // Run startup replay *after* returning hooks (via setTimeout) so the opencode
   // server finishes initialising and starts serving HTTP first — without this
@@ -123,6 +161,8 @@ const RouterPlugin: Plugin = async (input) => {
             })
           }
         }
+        // Token-metrics: push per-step token usage to VictoriaMetrics
+        pushMetricsToVM(part)
       }
     },
     "experimental.text.complete": async (inp, output) => {

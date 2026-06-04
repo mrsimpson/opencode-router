@@ -942,10 +942,12 @@ export async function ensurePod(
             { name: "PLAYWRIGHT_MCP_CDP_ENDPOINT", value: "http://localhost:9222" },
             { name: "OPENCODE_POD_SECRET", value: podSecret },
             { name: "OPENCODE_SESSION_HASH", value: hash },
+            { name: "OPENCODE_USER_EMAIL", value: email },
             ...(config.opencodeRouterUrl ? [{ name: "OPENCODE_ROUTER_URL", value: config.opencodeRouterUrl }] : []),
             ...(config.opencodeRouterExternalDomain
               ? [{ name: "OPENCODE_ROUTER_EXTERNAL_DOMAIN", value: config.opencodeRouterExternalDomain }]
               : []),
+            ...(config.victoriaMetricsUrl ? [{ name: "VICTORIA_METRICS_URL", value: config.victoriaMetricsUrl }] : []),
           ],
           envFrom: [
             { secretRef: { name: config.apiKeySecretName } },
