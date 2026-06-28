@@ -76,4 +76,95 @@ describe("config defaults", () => {
     )
     expect(result.stdout.trim()).toBe("ghcr.io/mrsimpson/opencode-editor:latest")
   })
+
+  it("modelThinking defaults to undefined when OPENCODE_MODEL_THINKING is unset", () => {
+    const env = { OPENCODE_IMAGE: "test", ROUTER_DOMAIN: "test.local" }
+    const result = spawnSync(
+      process.execPath,
+      ["--eval", "import('./src/config.ts').then(m => process.stdout.write(String(m.config.modelThinking)))"],
+      { env, encoding: "utf-8", cwd: resolve(import.meta.dirname, "..") },
+    )
+    expect(result.stdout.trim()).toBe("undefined")
+  })
+
+  it("modelCoding defaults to undefined when OPENCODE_MODEL_CODING is unset", () => {
+    const env = { OPENCODE_IMAGE: "test", ROUTER_DOMAIN: "test.local" }
+    const result = spawnSync(
+      process.execPath,
+      ["--eval", "import('./src/config.ts').then(m => process.stdout.write(String(m.config.modelCoding)))"],
+      { env, encoding: "utf-8", cwd: resolve(import.meta.dirname, "..") },
+    )
+    expect(result.stdout.trim()).toBe("undefined")
+  })
+
+  it("modelResearch defaults to undefined when OPENCODE_MODEL_RESEARCH is unset", () => {
+    const env = { OPENCODE_IMAGE: "test", ROUTER_DOMAIN: "test.local" }
+    const result = spawnSync(
+      process.execPath,
+      ["--eval", "import('./src/config.ts').then(m => process.stdout.write(String(m.config.modelResearch)))"],
+      { env, encoding: "utf-8", cwd: resolve(import.meta.dirname, "..") },
+    )
+    expect(result.stdout.trim()).toBe("undefined")
+  })
+
+  it("modelThinking is read from OPENCODE_MODEL_THINKING env var", () => {
+    const env = {
+      OPENCODE_IMAGE: "test",
+      ROUTER_DOMAIN: "test.local",
+      OPENCODE_MODEL_THINKING: "claude-opus-4-1",
+    }
+    const result = spawnSync(
+      process.execPath,
+      ["--eval", "import('./src/config.ts').then(m => process.stdout.write(m.config.modelThinking))"],
+      { env, encoding: "utf-8", cwd: resolve(import.meta.dirname, "..") },
+    )
+    expect(result.stdout.trim()).toBe("claude-opus-4-1")
+  })
+
+  it("modelCoding is read from OPENCODE_MODEL_CODING env var", () => {
+    const env = {
+      OPENCODE_IMAGE: "test",
+      ROUTER_DOMAIN: "test.local",
+      OPENCODE_MODEL_CODING: "claude-sonnet-4-5",
+    }
+    const result = spawnSync(
+      process.execPath,
+      ["--eval", "import('./src/config.ts').then(m => process.stdout.write(m.config.modelCoding))"],
+      { env, encoding: "utf-8", cwd: resolve(import.meta.dirname, "..") },
+    )
+    expect(result.stdout.trim()).toBe("claude-sonnet-4-5")
+  })
+
+  it("modelResearch is read from OPENCODE_MODEL_RESEARCH env var", () => {
+    const env = {
+      OPENCODE_IMAGE: "test",
+      ROUTER_DOMAIN: "test.local",
+      OPENCODE_MODEL_RESEARCH: "claude-haiku-4-5",
+    }
+    const result = spawnSync(
+      process.execPath,
+      ["--eval", "import('./src/config.ts').then(m => process.stdout.write(m.config.modelResearch))"],
+      { env, encoding: "utf-8", cwd: resolve(import.meta.dirname, "..") },
+    )
+    expect(result.stdout.trim()).toBe("claude-haiku-4-5")
+  })
+
+  it("all three model env vars are read independently when set together", () => {
+    const env = {
+      OPENCODE_IMAGE: "test",
+      ROUTER_DOMAIN: "test.local",
+      OPENCODE_MODEL_THINKING: "claude-opus-4-1",
+      OPENCODE_MODEL_CODING: "claude-sonnet-4-5",
+      OPENCODE_MODEL_RESEARCH: "claude-haiku-4-5",
+    }
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--eval",
+        "import('./src/config.ts').then(m => process.stdout.write(JSON.stringify({t: m.config.modelThinking, c: m.config.modelCoding, r: m.config.modelResearch})))",
+      ],
+      { env, encoding: "utf-8", cwd: resolve(import.meta.dirname, "..") },
+    )
+    expect(result.stdout.trim()).toBe('{"t":"claude-opus-4-1","c":"claude-sonnet-4-5","r":"claude-haiku-4-5"}')
+  })
 })

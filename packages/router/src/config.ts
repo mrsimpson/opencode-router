@@ -121,4 +121,24 @@ export const config = {
   archiveTimeoutMs: Number(process.env.ARCHIVE_TIMEOUT_MS ?? 30000),
   archiveStrictMode: process.env.ARCHIVE_STRICT_MODE === "true",
   archiveTempPodTimeoutMs: Number(process.env.ARCHIVE_TEMP_POD_TIMEOUT_MS ?? 120000),
+  /**
+   * Model IDs passed to the codemcp workflows capability routing feature.
+   * When at least one is set, the pod's init script runs
+   * `npx @codemcp/workflows setup capabilities opencode` to render the
+   * per-capability agent files (.opencode/agents/<capability>.md) and the
+   * .vibe/config.yaml capability_models map. Any workflow that consumes the
+   * capability-routing hint (e.g. `epcc`) then injects it into the LLM
+   * prompt so the right model is used for each phase.
+   *
+   * All three are optional. If unset, the feature is a no-op and the wizard
+   * is not invoked (no pod-startup cost).
+   *
+   * Example:
+   *   OPENCODE_MODEL_THINKING=claude-opus-4-1
+   *   OPENCODE_MODEL_CODING=claude-sonnet-4-5
+   *   OPENCODE_MODEL_RESEARCH=claude-haiku-4-5
+   */
+  modelThinking: process.env.OPENCODE_MODEL_THINKING,
+  modelCoding: process.env.OPENCODE_MODEL_CODING,
+  modelResearch: process.env.OPENCODE_MODEL_RESEARCH,
 }

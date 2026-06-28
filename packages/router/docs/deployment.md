@@ -247,6 +247,56 @@ spec:
 | `ARCHIVE_TIMEOUT_MS` | No | `30000` | Max time to wait for `opencode export` execution (ms) |
 | `ARCHIVE_STRICT_MODE` | No | `false` | If `true`, export failure throws and blocks termination |
 | `ARCHIVE_TEMP_POD_TIMEOUT_MS` | No | `120000` | Max time to wait for temporary export pod to reach Running state (ms) |
+| `OPENCODE_MODEL_THINKING` | No | — | Model ID passed to the codemcp workflows `thinking` capability. See [Capability-aware model selection](#capability-aware-model-selection) below. |
+| `OPENCODE_MODEL_CODING` | No | — | Model ID passed to the codemcp workflows `coding` capability. |
+| `OPENCODE_MODEL_RESEARCH` | No | — | Model ID passed to the codemcp workflows `research` capability. |
+
+### Capability-aware model selection
+
+When `OPENCODE_MODEL_THINKING`, `OPENCODE_MODEL_CODING`, and/or
+`OPENCODE_MODEL_RESEARCH` are set, the pod's init script invokes
+`npx @codemcp/workflows setup capabilities opencode` with the provided values.
+This generates per-capability agent files at
+`.opencode/agents/<capability>.md` inside the cloned repo and writes a
+`capability_models` map to `.vibe/config.yaml`. Any codemcp workflows
+workflow that consumes the capability-routing hint then injects a
+"Capability hint" into the LLM prompt that tells the agent which
+capability it is operating as and which model to use.
+
+For example, in the `epcc` workflow the phase→capability mapping is:
+- `explore` → `research`
+- `plan` → `thinking`
+- `code` → `coding`
+- `commit` → (unset)
+
+The env vars can be set in two places, with the **per-user Secret taking
+precedence** over the router Deployment when both are set:
+- **Router Deployment** — applies to all pods cluster-wide. The router reads
+  the env vars from its own environment and injects them into every pod's
+  init and main containers.
+- **Per-user Secret** — applies to a single user's pods. The user stores
+  `OPENCODE_MODEL_*` in their per-user Secret (via the Secrets page in the
+  web UI). The router injects them after the Deployment defaults (last-wins
+  semantics), so they override the cluster default for that user.
+
+When all three env vars are unset, the feature is a no-op (the wizard is not
+invoked and pod startup time is unchanged). The wizard is non-fatal: if it
+fails (e.g. no network for `npx`), opencode still starts, but the LLM will
+not receive a capability hint.
+
+Example homelab-apps Pulumi config (cluster-wide):
+
+```yaml
+configuration:
+  code:opencodeRouter:
+    env:
+      - name: OPENCODE_MODEL_THINKING
+        value: claude-opus-4-1
+      - name: OPENCODE_MODEL_CODING
+        value: claude-sonnet-4-5
+      - name: OPENCODE_MODEL_RESEARCH
+        value: claude-haiku-4-5
+```
 
 ### Why 2 replicas
 

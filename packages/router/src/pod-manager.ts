@@ -1,5 +1,5 @@
 import crypto from "node:crypto"
-import fs from "node:fs"
+import fs, { readFileSync } from "node:fs"
 import * as k8s from "@kubernetes/client-node"
 import { humanId as _humanId } from "human-id"
 import { config } from "./config.js"
@@ -8,6 +8,18 @@ import { podSecretStore } from "./pod-secret-store.js"
 import { messageStore } from "./message-store.js"
 import { portStore } from "./port-store.js"
 import { sessionsChangedBroadcaster as _sessionsChangedBroadcaster } from "./stream-broadcaster.js"
+
+// A standalone .sh file rather than an inline TS string because the init
+// container runs under `sh` (dash on Debian), not Node. Keeping it as a real
+// file means shellcheck can lint it, editors highlight it, `dash -n` can
+// syntax-check it in tests, and operators can run it standalone to reproduce
+// pod-init behaviour outside a cluster. The shebang is stripped on load
+// because the script is concatenated into a larger `sh -c` string — a shebang
+// mid-string is treated as a comment by sh, but it clutters `kubectl logs`.
+const CAPABILITY_ROUTING_BLOCK = readFileSync(
+  new URL("./scripts/capability-routing.sh", import.meta.url),
+  "utf8",
+).replace(/^#!.*\n/, "")
 
 /**
  * Lazily-initialised k8s API client.
@@ -853,6 +865,10 @@ export async function ensurePod(
           `git -c safe.directory=/workspace add -A`,
           `git -c safe.directory=/workspace commit -m "Initial commit" --allow-empty`,
         ]),
+    // --- codemcp workflows capability routing (idempotent, runs every start) ---
+    // Must follow the git phase: the wizard writes into /workspace, and
+    // git clone refuses a non-empty target directory.
+    CAPABILITY_ROUTING_BLOCK,
   ].join("\n")
 
   const secCtx: k8s.V1SecurityContext = {
@@ -871,7 +887,22 @@ export async function ensurePod(
       image: containerImage,
       command: ["sh", "-c"],
       args: [initScript],
-      ...(githubToken ? { envFrom: [{ secretRef: { name: githubSecretName(hash) } }] } : {}),
+      // Deployment defaults first, user Secret values after: Kubernetes resolves
+      // duplicate env: keys by taking the last occurrence, so this ordering
+      // gives per-user Secrets precedence over the cluster-wide Deployment value.
+      env: [
+        ...(config.modelThinking ? [{ name: "OPENCODE_MODEL_THINKING", value: config.modelThinking }] : []),
+        ...(config.modelCoding ? [{ name: "OPENCODE_MODEL_CODING", value: config.modelCoding }] : []),
+        ...(config.modelResearch ? [{ name: "OPENCODE_MODEL_RESEARCH", value: config.modelResearch }] : []),
+        ...(userSecrets?.OPENCODE_MODEL_THINKING ? [{ name: "OPENCODE_MODEL_THINKING", value: userSecrets.OPENCODE_MODEL_THINKING }] : []),
+        ...(userSecrets?.OPENCODE_MODEL_CODING ? [{ name: "OPENCODE_MODEL_CODING", value: userSecrets.OPENCODE_MODEL_CODING }] : []),
+        ...(userSecrets?.OPENCODE_MODEL_RESEARCH ? [{ name: "OPENCODE_MODEL_RESEARCH", value: userSecrets.OPENCODE_MODEL_RESEARCH }] : []),
+      ],
+      envFrom: [
+        { secretRef: { name: config.apiKeySecretName } },
+        ...(githubToken ? [{ secretRef: { name: githubSecretName(hash) } }] : []),
+        ...(userSecrets ? [{ secretRef: { name: getUserSecretName(session.email) } }] : []),
+      ],
       volumeMounts: [
         { name: "user-data", mountPath: "/home/opencode" },
         { name: "user-data", mountPath: "/workspace", subPath: "repo" },
@@ -948,6 +979,14 @@ export async function ensurePod(
               ? [{ name: "OPENCODE_ROUTER_EXTERNAL_DOMAIN", value: config.opencodeRouterExternalDomain }]
               : []),
             ...(config.victoriaMetricsUrl ? [{ name: "VICTORIA_METRICS_URL", value: config.victoriaMetricsUrl }] : []),
+            // Same ordering as the init container: Deployment defaults first,
+            // user Secret values last so they win (see init container comment).
+            ...(config.modelThinking ? [{ name: "OPENCODE_MODEL_THINKING", value: config.modelThinking }] : []),
+            ...(config.modelCoding ? [{ name: "OPENCODE_MODEL_CODING", value: config.modelCoding }] : []),
+            ...(config.modelResearch ? [{ name: "OPENCODE_MODEL_RESEARCH", value: config.modelResearch }] : []),
+            ...(userSecrets?.OPENCODE_MODEL_THINKING ? [{ name: "OPENCODE_MODEL_THINKING", value: userSecrets.OPENCODE_MODEL_THINKING }] : []),
+            ...(userSecrets?.OPENCODE_MODEL_CODING ? [{ name: "OPENCODE_MODEL_CODING", value: userSecrets.OPENCODE_MODEL_CODING }] : []),
+            ...(userSecrets?.OPENCODE_MODEL_RESEARCH ? [{ name: "OPENCODE_MODEL_RESEARCH", value: userSecrets.OPENCODE_MODEL_RESEARCH }] : []),
           ],
           envFrom: [
             { secretRef: { name: config.apiKeySecretName } },

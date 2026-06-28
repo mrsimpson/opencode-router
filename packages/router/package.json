@@ -5,7 +5,7 @@
   "private": true,
   "packageManager": "pnpm@10.0.0",
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --outdir=dist --format=esm --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\" && tsc --noEmit",
+    "build": "esbuild src/index.ts --bundle --platform=node --outdir=dist --format=esm --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\" && tsc --noEmit && mkdir -p dist/scripts && cp src/scripts/capability-routing.sh dist/scripts/capability-routing.sh",
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "dev": "tsx --env-file=.env.local --watch src/index.ts",

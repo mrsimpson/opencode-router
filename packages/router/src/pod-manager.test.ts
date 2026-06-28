@@ -181,6 +181,7 @@ const {
   suggestBranch,
   remoteBranchExists,
   deleteIdlePods,
+  ensurePod,
   getSessionInfo,
   getSessionHash,
   RemoteRefsUnreachableError,
@@ -2105,5 +2106,509 @@ describe.sequential("terminateSession — archive on termination", () => {
     // No archive should be written
     const fs = await import("node:fs")
     expect(fs.existsSync(`${ARCHIVE_DIR}/${EMAIL}/${SESSION_HASH}.json`)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Capability routing — OPENCODE_MODEL_{THINKING,CODING,RESEARCH} env vars
+// ---------------------------------------------------------------------------
+// The pod-manager module is loaded once per test file (Node module cache), so
+// the config object inside it is shared. We mutate its three model* fields
+// per test and reset to undefined in beforeEach to avoid cross-test pollution.
+describe.sequential("ensurePod — codemcp workflows capability routing", () => {
+  let testConfig: typeof import("./config.js").config
+
+  beforeEach(async () => {
+    fakePods = []
+    fakePVCs = []
+    createPodCalls = []
+    // Resolve the shared config object (same instance used by pod-manager
+    // internally — Node module cache returns the same export every time).
+    const mod = await import("./config.js")
+    testConfig = mod.config
+    // Reset the three model fields on the shared config object before each test.
+    testConfig.modelThinking = undefined
+    testConfig.modelCoding = undefined
+    testConfig.modelResearch = undefined
+  })
+
+  it("adds all three OPENCODE_MODEL_* env vars to the main container env when set", async () => {
+    testConfig.modelThinking = "claude-opus-4-1"
+    testConfig.modelCoding = "claude-sonnet-4-5"
+    testConfig.modelResearch = "claude-haiku-4-5"
+
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const mainEnv: any[] = pod.spec.containers[0].env ?? []
+    const byName = (name: string) => mainEnv.find((e) => e.name === name)
+    expect(byName("OPENCODE_MODEL_THINKING")?.value).toBe("claude-opus-4-1")
+    expect(byName("OPENCODE_MODEL_CODING")?.value).toBe("claude-sonnet-4-5")
+    expect(byName("OPENCODE_MODEL_RESEARCH")?.value).toBe("claude-haiku-4-5")
+  })
+
+  it("propagates OPENCODE_MODEL_* env vars to the init container so the wizard can see them", async () => {
+    // The init container has its own env namespace — it does not inherit the
+    // main container's env: block. Without explicit injection here, the
+    // if-guard in the .sh file is always false and the wizard is never called.
+    testConfig.modelThinking = "claude-opus-4-1"
+    testConfig.modelCoding = "claude-sonnet-4-5"
+    testConfig.modelResearch = "claude-haiku-4-5"
+
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const initEnv: any[] = pod.spec.initContainers[0].env ?? []
+    const byName = (name: string) => initEnv.find((e) => e.name === name)
+    expect(byName("OPENCODE_MODEL_THINKING")?.value).toBe("claude-opus-4-1")
+    expect(byName("OPENCODE_MODEL_CODING")?.value).toBe("claude-sonnet-4-5")
+    expect(byName("OPENCODE_MODEL_RESEARCH")?.value).toBe("claude-haiku-4-5")
+  })
+
+  it("omits OPENCODE_MODEL_* env vars from the init container env when unset", async () => {
+    // thinking, coding, and research are all undefined on the shared config
+
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const initEnv: any[] = pod.spec.initContainers[0].env ?? []
+    const names = initEnv.map((e) => e.name)
+    expect(names).not.toContain("OPENCODE_MODEL_THINKING")
+    expect(names).not.toContain("OPENCODE_MODEL_CODING")
+    expect(names).not.toContain("OPENCODE_MODEL_RESEARCH")
+  })
+
+  it("mounts the API-key Secret on the init container so the wizard sees env vars from it", async () => {
+    // The init script must see env vars the cluster operator puts in the
+    // API-key Secret (config.apiKeySecretName), not just the deployment env.
+    // Mirroring the main container's envFrom onto the init container
+    // guarantees the wizard's if-guard is true when the operator chooses
+    // the API-key Secret as the env-var source.
+    const originalSecretName = testConfig.apiKeySecretName
+    testConfig.apiKeySecretName = "opencode-api-keys"
+
+    try {
+      await (ensurePod as any)(
+        SESSION_HASH,
+        { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+      )
+
+      const pod = (createPodCalls[0] as any).body
+      const initEnvFrom: any[] = pod.spec.initContainers[0].envFrom ?? []
+      const refNames = initEnvFrom
+        .map((e: any) => e.secretRef?.name)
+        .filter(Boolean)
+      expect(refNames).toContain("opencode-api-keys")
+    } finally {
+      testConfig.apiKeySecretName = originalSecretName
+    }
+  })
+
+  it("mounts the user Secret on the init container so the wizard sees env vars from user secrets", async () => {
+    // Without the user Secret in the init container's envFrom, a user who
+    // sets OPENCODE_MODEL_* only in their per-user Secret would find the
+    // if-guard always false — the wizard would never run for them.
+    const userSecrets = {
+      OPENCODE_MODEL_THINKING: "claude-opus-4-1",
+      OPENCODE_MODEL_CODING: "claude-sonnet-4-5",
+      OPENCODE_MODEL_RESEARCH: "claude-haiku-4-5",
+    }
+
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+      undefined, // githubToken
+      undefined, // podSecret
+      userSecrets,
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const initEnvFrom: any[] = pod.spec.initContainers[0].envFrom ?? []
+    const refNames = initEnvFrom
+      .map((e: any) => e.secretRef?.name)
+      .filter(Boolean)
+    // The user Secret name is derived from the email; we don't hardcode
+    // the format here (see getUserSecretName tests for that), only assert
+    // that *some* user-Secret-style ref is present.
+    const userSecretRef = initEnvFrom.find(
+      (e: any) => e.secretRef?.name && /user/i.test(e.secretRef.name),
+    )
+    expect(userSecretRef, `init container envFrom should include the user secret; got ${JSON.stringify(refNames)}`).toBeTruthy()
+  })
+
+  it("init container envFrom mirrors the main container envFrom (so the wizard and the agent process see the same env)", async () => {
+    // Any Secret dropped from the init container envFrom would be invisible
+    // to the wizard even though the agent process sees it. This tests that
+    // the two envFrom lists stay in lockstep regardless of which Secrets
+    // are present for a given session.
+    const userSecrets = { FOO: "bar" }
+
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+      undefined,
+      undefined,
+      userSecrets,
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const initRefNames = (pod.spec.initContainers[0].envFrom ?? [])
+      .map((e: any) => e.secretRef?.name)
+      .filter(Boolean)
+    const mainRefNames = (pod.spec.containers[0].envFrom ?? [])
+      .map((e: any) => e.secretRef?.name)
+      .filter(Boolean)
+    // Every Secret referenced by the main container must also be
+    // referenced by the init container (the init container can have
+    // additional refs, e.g. for the deployment env, but never fewer).
+    for (const ref of mainRefNames) {
+      expect(initRefNames, `init container envFrom should include ${ref} (from main container)`).toContain(ref)
+    }
+  })
+
+  it("omits OPENCODE_MODEL_* env vars from the main container env when unset", async () => {
+    // thinking, coding, and research are all undefined on the shared config
+
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const mainEnv: any[] = pod.spec.containers[0].env ?? []
+    const names = mainEnv.map((e) => e.name)
+    expect(names).not.toContain("OPENCODE_MODEL_THINKING")
+    expect(names).not.toContain("OPENCODE_MODEL_CODING")
+    expect(names).not.toContain("OPENCODE_MODEL_RESEARCH")
+  })
+
+  it("adds only the set env vars (partial setting)", async () => {
+    testConfig.modelCoding = "claude-sonnet-4-5"
+    // thinking and research remain undefined
+
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const mainEnv: any[] = pod.spec.containers[0].env ?? []
+    const names = mainEnv.map((e) => e.name)
+    expect(names).toContain("OPENCODE_MODEL_CODING")
+    expect(names).not.toContain("OPENCODE_MODEL_THINKING")
+    expect(names).not.toContain("OPENCODE_MODEL_RESEARCH")
+  })
+
+  it("per-user Secret OPENCODE_MODEL_* values override Deployment defaults in the main container", async () => {
+    // The user's per-user Secret values must take precedence over the cluster-wide
+    // Deployment defaults. The router injects the Deployment values first, then
+    // the user Secret values after — Kubernetes uses the last env: entry when the
+    // same key appears more than once.
+    testConfig.modelThinking = "deployment-thinking-model"
+    testConfig.modelCoding = "deployment-coding-model"
+    testConfig.modelResearch = "deployment-research-model"
+
+    const userSecrets = {
+      OPENCODE_MODEL_THINKING: "user-thinking-model",
+      OPENCODE_MODEL_CODING: "user-coding-model",
+    }
+
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+      undefined, // githubToken
+      undefined, // podSecret
+      userSecrets,
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const mainEnv: any[] = pod.spec.containers[0].env ?? []
+    // Last entry for each key wins in Kubernetes — assert the user's value is last.
+    const lastByName = (name: string) => [...mainEnv].reverse().find((e) => e.name === name)
+    expect(lastByName("OPENCODE_MODEL_THINKING")?.value).toBe("user-thinking-model")
+    expect(lastByName("OPENCODE_MODEL_CODING")?.value).toBe("user-coding-model")
+    // RESEARCH was not set by the user — Deployment default is the only entry.
+    expect(lastByName("OPENCODE_MODEL_RESEARCH")?.value).toBe("deployment-research-model")
+  })
+
+  it("per-user Secret OPENCODE_MODEL_* values override Deployment defaults in the init container", async () => {
+    // The init container must honour the same override semantics as the main container
+    // so the wizard receives the user's model IDs (not the Deployment defaults).
+    testConfig.modelCoding = "deployment-coding-model"
+
+    const userSecrets = {
+      OPENCODE_MODEL_CODING: "user-coding-model",
+    }
+
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+      undefined,
+      undefined,
+      userSecrets,
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const initEnv: any[] = pod.spec.initContainers[0].env ?? []
+    const lastByName = (name: string) => [...initEnv].reverse().find((e) => e.name === name)
+    expect(lastByName("OPENCODE_MODEL_CODING")?.value).toBe("user-coding-model")
+  })
+
+  it("init script inlines the capability-routing.sh content (the wizard block is loaded from a dedicated .sh file)", async () => {
+    // Verifies the readFileSync + shebang-strip pipe: if the file path is
+    // wrong, or the strip regex accidentally removes too much, the wizard
+    // invocation would be absent from the rendered pod manifest and the
+    // feature would silently not run.
+    testConfig.modelThinking = "claude-opus-4-1"
+    testConfig.modelCoding = "claude-sonnet-4-5"
+    testConfig.modelResearch = "claude-haiku-4-5"
+
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const script: string = pod.spec.initContainers[0].args[0]
+    // Must contain the if-guard from the .sh file
+    expect(script).toContain(
+      `[ -n "$OPENCODE_MODEL_THINKING$OPENCODE_MODEL_CODING$OPENCODE_MODEL_RESEARCH" ]`,
+    )
+    // Must contain the npx invocation from the .sh file
+    expect(script).toContain(
+      'npx -y @codemcp/workflows setup capabilities opencode "$@" --force',
+    )
+  })
+
+  it("capability wizard block appears after git clone in the rendered init script (ordering guard)", async () => {
+    // The wizard writes .opencode/agents/*.md and .vibe/config.yaml into
+    // /workspace. git clone refuses a non-empty target directory, so the
+    // wizard must run after the repo is in place — not before.
+    testConfig.modelCoding = "claude-sonnet-4-5"
+
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const script: string = pod.spec.initContainers[0].args[0]
+
+    const gitCloneIdx = script.indexOf("git clone")
+    const wizardIdx = script.indexOf("@codemcp/workflows")
+
+    expect(gitCloneIdx, "init script should contain git clone").toBeGreaterThan(-1)
+    expect(wizardIdx, "init script should contain the wizard invocation").toBeGreaterThan(-1)
+    expect(wizardIdx, "capability wizard must run after git clone").toBeGreaterThan(gitCloneIdx)
+  })
+
+  it("capability-routing.sh passes `dash -n` syntax check (POSIX-sh compatibility)", async () => {
+    // The init container's command is `sh -c <initScript>`, and on Debian-based
+    // images `sh` is `dash` (strict POSIX). Using bash-only constructs in the
+    // sub-script (WIZARD_ARGS=(), ${ARR[@]}, [[, etc.) produces a `sh: syntax
+    // error` at pod start, blocking all pod creation. The .sh file is a
+    // standalone POSIX sh file, so it can be syntax-checked with `dash -n`
+    // directly — the same interpreter that runs it inside the pod.
+    const { readFileSync, existsSync } = await import("node:fs")
+    const { fileURLToPath } = await import("node:url")
+    const { dirname, resolve } = await import("node:path")
+    const scriptPath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "scripts",
+      "capability-routing.sh",
+    )
+    expect(existsSync(scriptPath), `expected .sh file at ${scriptPath}`).toBe(true)
+    const script = readFileSync(scriptPath, "utf8")
+
+    const { spawnSync } = await import("node:child_process")
+    const which = spawnSync("which", ["dash"], { encoding: "utf8" })
+    if (which.status === 0) {
+      const result = spawnSync("dash", ["-n"], { input: script, encoding: "utf8" })
+      expect(
+        result.status,
+        `capability-routing.sh fails dash -n syntax check:\n${result.stderr}\n--- script ---\n${script}`,
+      ).toBe(0)
+    }
+  })
+
+  it("capability-routing.sh contains the 3 expected stderr log lines (operator visibility contract)", async () => {
+    // The .sh file is the source of truth for the wizard block. Operators inspect
+    // pod logs via `kubectl logs <pod> -c init` to debug capability setup, so the
+    // three log lines (pre-invocation, success, failure) must be present and
+    // emit to stderr.
+    const { readFileSync } = await import("node:fs")
+    const { fileURLToPath } = await import("node:url")
+    const { dirname, resolve } = await import("node:path")
+    const scriptPath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "scripts",
+      "capability-routing.sh",
+    )
+    const script = readFileSync(scriptPath, "utf8")
+
+    expect(script).toContain(
+      `echo "opencode-init: configuring capabilities (thinking=\${OPENCODE_MODEL_THINKING}, coding=\${OPENCODE_MODEL_CODING}, research=\${OPENCODE_MODEL_RESEARCH})" >&2`,
+    )
+    expect(script).toContain(`echo "opencode-init: capability setup complete" >&2`)
+    expect(script).toContain(
+      `echo "opencode-init: capability setup FAILED (exit=\$rc); opencode will still start, but the LLM will not receive a capability hint" >&2`,
+    )
+    // The wizard is wrapped in `if ... then ... else ... fi` (not `||`), so the
+    // failure branch can include the exit code (`rc=$?`) and a non-fatal
+    // continuation message.
+    expect(script).toMatch(
+      /if npx -y @codemcp\/workflows setup capabilities opencode "\$@" --force; then/,
+    )
+    expect(script).toContain("rc=$?")
+  })
+
+  it("capability-routing.sh uses plain `npx -y @codemcp/workflows` (no `-p js-yaml` workaround)", async () => {
+    // The wizard must be self-contained: invoking `npx -y @codemcp/workflows`
+    // must work without pre-installing `js-yaml` separately, because the
+    // init script cannot assume any package beyond the opencode image's
+    // pre-installed dev tools.
+    const { readFileSync } = await import("node:fs")
+    const { fileURLToPath } = await import("node:url")
+    const { dirname, resolve } = await import("node:path")
+    const scriptPath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "scripts",
+      "capability-routing.sh",
+    )
+    const script = readFileSync(scriptPath, "utf8")
+
+    expect(script).toContain(
+      'npx -y @codemcp/workflows setup capabilities opencode "$@" --force',
+    )
+    expect(script).not.toContain("-p js-yaml")
+    expect(script).not.toContain("ade-workflows")
+  })
+
+  it("capability-routing.sh invokes the wizard with the right argv when env vars are set (behavioral test)", async () => {
+    // Run the .sh file in dash with a stub `npx` and verify the wizard
+    // receives the expected argv. The init container's command is
+    // `sh -c <initScript>`, so this is exactly what the init container
+    // will execute in production: a value with spaces in OPENCODE_MODEL_CODING
+    // must be preserved as a single argv element (no word-splitting on IFS).
+    const { readFileSync } = await import("node:fs")
+    const { fileURLToPath } = await import("node:url")
+    const { dirname, resolve, join } = await import("node:path")
+    const scriptPath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "scripts",
+      "capability-routing.sh",
+    )
+    const script = readFileSync(scriptPath, "utf8")
+
+    // Set up a temp dir with a stub `npx` that records its argv to a file.
+    const os = await import("node:os")
+    const fs = await import("node:fs")
+    const tmpDir = fs.mkdtempSync(join(os.tmpdir(), "opencode-init-test-"))
+    const stubDir = join(tmpDir, "bin")
+    fs.mkdirSync(stubDir)
+    const argvFile = join(tmpDir, "argv.txt")
+    const stubNpx = `#!/bin/sh
+# Each positional arg is written to argv.txt on its own line. Args with
+# spaces (e.g. "claude-sonnet with space") are written as a single line —
+# the writer uses printf which does NOT word-split on whitespace.
+# $0 is the stub path itself and is NOT included in $@.
+printf '%s\\n' "$@" > "${argvFile}"
+`
+    const stubPath = join(stubDir, "npx")
+    fs.writeFileSync(stubPath, stubNpx)
+    fs.chmodSync(stubPath, 0o755)
+
+    // cd /workspace would silently fail if the dir doesn't exist; the script
+    // would then write the wizard output into whatever dir the test runner
+    // happens to be in, giving a false-positive pass.
+    const workspaceDir = join(tmpDir, "workspace")
+    fs.mkdirSync(workspaceDir, { recursive: true })
+    // Patch the script to use our temp workspace instead of /workspace
+    // (read-only source — we just adjust via env, so the test stays hermetic)
+    const patchedScript = script.replace("cd /workspace", `cd "${workspaceDir}"`).replace("cd /", `cd "${tmpDir}"`)
+
+    try {
+      const { spawnSync } = await import("node:child_process")
+      const result = spawnSync("dash", ["-c", patchedScript], {
+        env: {
+          ...process.env,
+          PATH: `${stubDir}:${process.env.PATH}`,
+          OPENCODE_MODEL_THINKING: "claude-opus-4-1",
+          OPENCODE_MODEL_CODING: "claude-sonnet with space", // value with spaces
+          OPENCODE_MODEL_RESEARCH: "claude-haiku-4-5",
+        },
+        encoding: "utf8",
+      })
+      expect(
+        result.status,
+        `dash failed:\nstdout=${result.stdout}\nstderr=${result.stderr}\nscript=${script}`,
+      ).toBe(0)
+
+      // Read the captured argv: one line per arg, args with spaces stay on
+      // their own line (printf does not word-split).
+      const argvText = fs.readFileSync(argvFile, "utf8")
+      const argv = argvText.split("\n").filter((line) => line.length > 0)
+      expect(argv).toEqual([
+        "-y",
+        "@codemcp/workflows",
+        "setup",
+        "capabilities",
+        "opencode",
+        "--model-thinking",
+        "claude-opus-4-1",
+        "--model-coding",
+        "claude-sonnet with space", // preserved as a single argv element
+        "--model-research",
+        "claude-haiku-4-5",
+        "--force",
+      ])
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it("capability-routing.sh is a no-op (silent) when no env vars are set (behavioral test)", async () => {
+    // When all three env vars are unset, the wizard block's if-guard is false
+    // and the script exits 0 with no output (no npx call, no log line). This
+    // is the common path for deployments that don't use capability routing.
+    const { readFileSync } = await import("node:fs")
+    const { fileURLToPath } = await import("node:url")
+    const { dirname, resolve } = await import("node:path")
+    const scriptPath = resolve(
+      dirname(fileURLToPath(import.meta.url)),
+      "scripts",
+      "capability-routing.sh",
+    )
+    const script = readFileSync(scriptPath, "utf8")
+
+    const { spawnSync } = await import("node:child_process")
+    const result = spawnSync("dash", ["-c", script], {
+      env: {
+        ...process.env,
+        PATH: process.env.PATH,
+        // Explicitly unset the model vars so the if-guard is false even if
+        // the test runner's environment has them set.
+        OPENCODE_MODEL_THINKING: undefined,
+        OPENCODE_MODEL_CODING: undefined,
+        OPENCODE_MODEL_RESEARCH: undefined,
+      },
+      encoding: "utf8",
+    })
+    expect(
+      result.status,
+      `dash failed:\nstdout=${result.stdout}\nstderr=${result.stderr}`,
+    ).toBe(0)
+    // The "skipped" case is silent: no output to stdout or stderr.
+    expect(result.stdout).toBe("")
+    expect(result.stderr).toBe("")
   })
 })

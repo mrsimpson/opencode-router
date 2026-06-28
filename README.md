@@ -16,6 +16,7 @@ opencode is an AI coding agent that runs in a terminal. opencode-router brings i
 - **Local client attach** — users can `opencode attach` from their terminal to connect to a running cloud session using password auth on a separate attach endpoint
 - **Progress streaming** — session startup stages (initializing → configuring → cloning → starting) are streamed to the browser in real time via SSE
 - **Per-user secrets** — users can store environment variables (e.g. API keys) that are injected into every pod they start, via an encrypted Kubernetes Secret
+- **Capability-aware model selection** — operators can set `OPENCODE_MODEL_THINKING`, `OPENCODE_MODEL_CODING`, and `OPENCODE_MODEL_RESEARCH` on the router Deployment (cluster-wide default) or in a per-user Secret (per-user override, takes precedence) to control which model each codemcp workflows phase uses. The pod's init script renders per-capability agent files in the cloned repo and the feature injects a "Capability hint" into the LLM prompt. See [deployment docs](packages/router/docs/deployment.md#capability-aware-model-selection) for details.
 
 ## Architecture
 
@@ -75,6 +76,9 @@ Kubernetes (namespace: code)
 | `EDITOR_IMAGE` | | `ghcr.io/mrsimpson/opencode-editor:latest` | OCI image for the editor sidecar container |
 | `ADMIN_SECRET` | | — | Secret for admin endpoints (e.g. image pre-pull). Optional. |
 | `DEBUG_HEADERS` | | `false` | Log all incoming request headers (useful for diagnosing missing auth headers) |
+| `OPENCODE_MODEL_THINKING` | | — | Model ID for the codemcp workflows `thinking` capability |
+| `OPENCODE_MODEL_CODING` | | — | Model ID for the codemcp workflows `coding` capability |
+| `OPENCODE_MODEL_RESEARCH` | | — | Model ID for the codemcp workflows `research` capability |
 
 ### Choosing an opencode image
 
