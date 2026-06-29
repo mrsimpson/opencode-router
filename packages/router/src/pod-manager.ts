@@ -101,6 +101,28 @@ export function _clearBootstrappedSessions() {
   bootstrappedSessions.clear()
 }
 
+/**
+ * Parse a multiline KEY=value string (e.g. from config.podEnv / POD_ENV) into
+ * a list of Kubernetes env-var objects ready to spread into a container env: block.
+ *
+ * Rules:
+ *  - Lines are split on "\n"
+ *  - Blank lines and lines starting with "#" are ignored
+ *  - Each remaining line is split on the **first** "=" only, so values may contain "="
+ *  - Lines without "=" are silently ignored
+ */
+export function parsePodEnv(raw: string): { name: string; value: string }[] {
+  if (!raw) return []
+  return raw
+    .split("\n")
+    .filter((line) => line.trim() !== "" && !line.trimStart().startsWith("#"))
+    .flatMap((line) => {
+      const idx = line.indexOf("=")
+      if (idx === -1) return []
+      return [{ name: line.slice(0, idx), value: line.slice(idx + 1) }]
+    })
+}
+
 /** Emit a sessions-changed signal — injectable for testing. */
 let emitSessionsChanged: () => void = () => _sessionsChangedBroadcaster.emit()
 /** For testing only: replace the sessionsChanged emit function. */
@@ -948,17 +970,14 @@ export async function ensurePod(
           // The main container mounts the full PVC at /home/opencode, so the repo is at
           // /home/opencode/repo/.
           workingDir: workspacePath,
-          // Source /home/opencode/.opencode/.env if present — lets operators inject arbitrary
-          // env vars (e.g. WORKFLOW_AGENTS) via the existing ConfigMap without touching router code.
-          command: [
-            "sh",
-            "-c",
-            [
-              `git config --global --add safe.directory /home/opencode/repo`,
-              `set -a; . /home/opencode/.opencode/.env 2>/dev/null || true; set +a`,
-              `exec opencode serve --hostname 0.0.0.0 --port ${config.opencodePort}`,
-            ].join("\n"),
-          ],
+           command: [
+             "sh",
+             "-c",
+             [
+               `git config --global --add safe.directory /home/opencode/repo`,
+               `exec opencode serve --hostname 0.0.0.0 --port ${config.opencodePort}`,
+             ].join("\n"),
+           ],
           readinessProbe: {
             httpGet: { path: "/global/health", port: config.opencodePort },
             initialDelaySeconds: 5,
@@ -984,6 +1003,9 @@ export async function ensurePod(
             ...(config.modelThinking ? [{ name: "OPENCODE_MODEL_THINKING", value: config.modelThinking }] : []),
             ...(config.modelCoding ? [{ name: "OPENCODE_MODEL_CODING", value: config.modelCoding }] : []),
             ...(config.modelResearch ? [{ name: "OPENCODE_MODEL_RESEARCH", value: config.modelResearch }] : []),
+            // Inject all KEY=value pairs from the operator-supplied podEnv string so vars like
+            // WORKFLOW_AGENTS reach the pod as first-class env entries.
+            ...parsePodEnv(config.podEnv),
             ...(userSecrets?.OPENCODE_MODEL_THINKING ? [{ name: "OPENCODE_MODEL_THINKING", value: userSecrets.OPENCODE_MODEL_THINKING }] : []),
             ...(userSecrets?.OPENCODE_MODEL_CODING ? [{ name: "OPENCODE_MODEL_CODING", value: userSecrets.OPENCODE_MODEL_CODING }] : []),
             ...(userSecrets?.OPENCODE_MODEL_RESEARCH ? [{ name: "OPENCODE_MODEL_RESEARCH", value: userSecrets.OPENCODE_MODEL_RESEARCH }] : []),

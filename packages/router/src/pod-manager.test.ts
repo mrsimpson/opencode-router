@@ -2612,3 +2612,145 @@ printf '%s\\n' "$@" > "${argvFile}"
     expect(result.stderr).toBe("")
   })
 })
+
+// ---------------------------------------------------------------------------
+// parsePodEnv — unit tests for the podEnv multiline string parser
+// ---------------------------------------------------------------------------
+// These tests FAIL until parsePodEnv is added and exported from pod-manager.ts.
+// ---------------------------------------------------------------------------
+describe("parsePodEnv", () => {
+  let parsePodEnv: (raw: string) => { name: string; value: string }[]
+
+  beforeEach(async () => {
+    const mod = await import("./pod-manager.js")
+    parsePodEnv = (mod as any).parsePodEnv
+  })
+
+  it("parses a single KEY=value line", () => {
+    expect(parsePodEnv("WORKFLOW_AGENTS=workflow")).toEqual([
+      { name: "WORKFLOW_AGENTS", value: "workflow" },
+    ])
+  })
+
+  it("parses multiple newline-separated KEY=value lines", () => {
+    const raw = "WORKFLOW_AGENTS=workflow\nVICTORIA_METRICS_URL=http://vm:8428"
+    expect(parsePodEnv(raw)).toEqual([
+      { name: "WORKFLOW_AGENTS", value: "workflow" },
+      { name: "VICTORIA_METRICS_URL", value: "http://vm:8428" },
+    ])
+  })
+
+  it("ignores blank lines", () => {
+    expect(parsePodEnv("\nWORKFLOW_AGENTS=workflow\n\n")).toEqual([
+      { name: "WORKFLOW_AGENTS", value: "workflow" },
+    ])
+  })
+
+  it("ignores lines starting with #", () => {
+    expect(parsePodEnv("# comment\nWORKFLOW_AGENTS=workflow")).toEqual([
+      { name: "WORKFLOW_AGENTS", value: "workflow" },
+    ])
+  })
+
+  it("preserves = characters in the value (splits only on the first =)", () => {
+    expect(parsePodEnv("URL=http://host/path?foo=bar")).toEqual([
+      { name: "URL", value: "http://host/path?foo=bar" },
+    ])
+  })
+
+  it("returns an empty array for an empty string", () => {
+    expect(parsePodEnv("")).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// podEnv propagation — all vars in config.podEnv reach the main container env
+// ---------------------------------------------------------------------------
+// Root cause: WORKFLOW_AGENTS (and any other podEnv var) had no first-class
+// config field or env: entry — the only path was the fragile .env sourcing
+// from the ConfigMap mount (silently absent when ConfigMap is stale/empty).
+// Fix: parse config.podEnv and spread into the main container env: block.
+//
+// These tests FAIL until:
+//   1. config.ts gains `podEnv: process.env.POD_ENV ?? ""`
+//   2. pod-manager.ts spreads parsePodEnv(config.podEnv) into the main
+//      container env: array
+// ---------------------------------------------------------------------------
+describe.sequential("ensurePod — podEnv propagation", () => {
+  let testConfig: typeof import("./config.js").config
+
+  beforeEach(async () => {
+    fakePods = []
+    fakePVCs = []
+    createPodCalls = []
+    const mod = await import("./config.js")
+    testConfig = mod.config
+    // Reset podEnv before each test to prevent cross-test pollution.
+    testConfig.podEnv = ""
+  })
+
+  it("injects all vars from podEnv into the main container env when podEnv is set", async () => {
+    testConfig.podEnv = "WORKFLOW_AGENTS=workflow\nMY_CUSTOM_VAR=hello"
+
+    const { ensurePod } = await import("./pod-manager.js")
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const mainEnv: any[] = pod.spec.containers[0].env ?? []
+
+    const workflowEntry = mainEnv.find((e: any) => e.name === "WORKFLOW_AGENTS")
+    expect(workflowEntry, "WORKFLOW_AGENTS must appear in the main container env").toBeDefined()
+    expect(workflowEntry?.value).toBe("workflow")
+
+    const customEntry = mainEnv.find((e: any) => e.name === "MY_CUSTOM_VAR")
+    expect(customEntry, "MY_CUSTOM_VAR must appear in the main container env").toBeDefined()
+    expect(customEntry?.value).toBe("hello")
+  })
+
+  it("adds no extra env entries when podEnv is empty", async () => {
+    // podEnv is "" (reset in beforeEach)
+    const { ensurePod } = await import("./pod-manager.js")
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const mainEnv: any[] = pod.spec.containers[0].env ?? []
+    const names = mainEnv.map((e: any) => e.name)
+    expect(names).not.toContain("WORKFLOW_AGENTS")
+    expect(names).not.toContain("MY_CUSTOM_VAR")
+  })
+
+  it("mounts the opencode-config ConfigMap volume in the pod spec volumes list", async () => {
+    const { ensurePod } = await import("./pod-manager.js")
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const volumes: any[] = pod.spec.volumes ?? []
+    const configVolume = volumes.find((v: any) => v.name === "opencode-config")
+    expect(configVolume, "spec.volumes must include a volume named opencode-config").toBeDefined()
+    expect(configVolume?.configMap?.name).toBe(testConfig.configMapName)
+  })
+
+  it("mounts the opencode-config volume at /home/opencode/.opencode in the main container", async () => {
+    const { ensurePod } = await import("./pod-manager.js")
+    await (ensurePod as any)(
+      SESSION_HASH,
+      { email: EMAIL, repoUrl: REPO, branch: BRANCH, sourceBranch: "main" },
+    )
+
+    const pod = (createPodCalls[0] as any).body
+    const mounts: any[] = pod.spec.containers[0].volumeMounts ?? []
+    const configMount = mounts.find((m: any) => m.name === "opencode-config")
+    expect(configMount, "main container volumeMounts must include opencode-config").toBeDefined()
+    expect(configMount?.mountPath).toBe("/home/opencode/.opencode")
+    expect(configMount?.readOnly).toBe(true)
+  })
+})

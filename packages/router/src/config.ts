@@ -141,4 +141,12 @@ export const config = {
   modelThinking: process.env.OPENCODE_MODEL_THINKING,
   modelCoding: process.env.OPENCODE_MODEL_CODING,
   modelResearch: process.env.OPENCODE_MODEL_RESEARCH,
+  /**
+   * Raw multiline string of KEY=value pairs to inject into session pod containers.
+   * Operators set arbitrary env vars here (e.g. "WORKFLOW_AGENTS=workflow\nFOO=bar").
+   * Parsed by parsePodEnv() in pod-manager.ts and spread into the main container env: block,
+   * so every KEY=value line reaches the pod as a first-class env entry.
+   * Set via POD_ENV env var on the router Deployment (wired from Pulumi code:podEnv config).
+   */
+  podEnv: process.env.POD_ENV ?? "",
 }
