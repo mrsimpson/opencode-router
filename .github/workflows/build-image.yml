@@ -48,8 +48,8 @@ jobs:
 
       - name: Login to GHCR
         run: |
-          echo "${{ secrets.GH_PAT }}" | docker login ghcr.io \
-            -u ${{ github.repository_owner }} --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
+            -u ${{ github.actor }} --password-stdin
 
       - name: Get version from package.json
         id: version
@@ -88,8 +88,8 @@ jobs:
 
       - name: Login to GHCR
         run: |
-          echo "${{ secrets.GH_PAT }}" | docker login ghcr.io \
-            -u ${{ github.repository_owner }} --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
+            -u ${{ github.actor }} --password-stdin
 
       - name: Get version from package.json
         id: version
@@ -107,6 +107,7 @@ jobs:
         working-directory: packages/editor
         run: |
           docker build \
+            --label "org.opencontainers.image.source=${{ env.GITHUB_SERVER_URL }}/${{ env.GITHUB_REPOSITORY }}/blob/${{ env.GITHUB_REF_NAME }}/packages/editor/Dockerfile" \
             -t ${{ env.EDITOR_IMAGE_NAME }}:${{ steps.version.outputs.tag }} \
             -t ${{ env.EDITOR_IMAGE_NAME }}:latest \
             .
