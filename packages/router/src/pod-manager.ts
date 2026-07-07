@@ -975,7 +975,7 @@ export async function ensurePod(
              "-c",
              [
                `git config --global --add safe.directory /home/opencode/repo`,
-               `exec opencode serve --hostname 0.0.0.0 --port ${config.opencodePort}`,
+               `exec opencode serve --hostname :: --port ${config.opencodePort}`,
              ].join("\n"),
            ],
           readinessProbe: {
@@ -1030,7 +1030,7 @@ export async function ensurePod(
           name: "chromium",
           image: config.chromiumImage,
           args: [
-            "--remote-debugging-address=0.0.0.0",
+            "--remote-debugging-address=::",
             "--remote-debugging-port=9222",
             "--no-sandbox",
             "--disable-dev-shm-usage",
