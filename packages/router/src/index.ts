@@ -131,7 +131,7 @@ async function validateAttachPassword(hash: string, req: http.IncomingMessage): 
 }
 
 function getEmail(req: http.IncomingMessage): string | null {
-  const header = req.headers["x-auth-request-email"]
+  const header = req.headers[config.authEmailHeader.toLowerCase()]
   if (typeof header === "string" && header.length > 0) return header
   if (config.devEmail) return config.devEmail
   return null
@@ -193,7 +193,7 @@ proxy.on("error", (err, _req, res) => {
 const handler: http.RequestListener = async (req, res) => {
   if (config.debugHeaders) {
     console.log(
-      `[debug] ${req.method} ${req.headers.host}${req.url} email=${req.headers["x-auth-request-email"] ?? "MISSING"} token=${req.headers["x-auth-request-access-token"] ? "PRESENT" : "MISSING"}`,
+      `[debug] ${req.method} ${req.headers.host}${req.url} email=${req.headers[config.authEmailHeader] ?? "MISSING"} token=${req.headers["x-auth-request-access-token"] ? "PRESENT" : "MISSING"}`,
     )
   }
 
