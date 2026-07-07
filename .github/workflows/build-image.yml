@@ -67,6 +67,7 @@ jobs:
         run: |
           docker build \
             --build-arg APP_VERSION="${{ steps.version.outputs.tag }}" \
+            --label "org.opencontainers.image.source=${{ env.GITHUB_SERVER_URL }}/${{ env.GITHUB_REPOSITORY }}/blob/${{ env.GITHUB_REF_NAME }}/Dockerfile" \
             -t ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }} \
             -t ${{ env.IMAGE_NAME }}:latest \
             .
