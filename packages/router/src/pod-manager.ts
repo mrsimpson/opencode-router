@@ -284,7 +284,7 @@ async function buildSessionInfo(
         // Fresh pod (no sessions yet) with an initialMessage — bootstrap a new session.
         // All concurrent callers await the same Promise — only one POST /session is ever sent.
         // Returns null while bootstrap is in-flight or if it has permanently failed.
-        let base = `http://${pod.status.podIP}:${config.opencodePort}`
+        let base = constructBaseUrl(pod.status.podIP)
         if (devProxy.enabled) {
           const proxyTarget = await devProxy.target(hash)
           if (proxyTarget) base = proxyTarget
@@ -1620,10 +1620,27 @@ function isConflict(err: unknown): boolean {
   return hasCode(err) && err.code === 409
 }
 
-/** Poll a running pod's /experimental/session endpoint. Returns time.updated ms or null. */
+export function constructPodUrl(ip: string, port: number): string {
+  let base: string
+
+  if (ip.includes(':'))
+    base = `http://[${ip}]:${port}`
+  else
+    base = `http://${ip}:${port}`
+
+  return base
+}
+
+function constructBaseUrl(ip: string): string {
+  let base: string
+
+  return constructPodUrl(ip, config.opencodePort)
+}
+
+/** Poll a running pod's /session endpoint. Returns time.updated ms or null. */
 async function podActivityMs(ip: string, hash: string): Promise<{ ms: number; sessionId?: string } | null> {
   try {
-    let base = `http://${ip}:${config.opencodePort}`
+    let base = constructBaseUrl(ip)
     if (devProxy.enabled) {
       const proxyTarget = await devProxy.target(hash)
       if (!proxyTarget) return null
