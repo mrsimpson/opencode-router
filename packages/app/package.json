@@ -16,9 +16,9 @@
     "zod": "4.1.8"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "4.1.11",
+    "@tailwindcss/vite": "4.3.3",
     "@tsconfig/node22": "22.0.2",
-    "tailwindcss": "4.1.11",
+    "tailwindcss": "4.3.3",
     "typescript": "5.8.2",
     "vite": "7.1.4",
     "vite-plugin-solid": "2.11.10",
