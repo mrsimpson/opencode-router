@@ -36,7 +36,7 @@ export const dict = {
   "loading.stage.configuring": "Umgebung konfigurieren",
   "loading.stage.preparing": "Repository vorbereiten",
   "loading.stage.starting": "OpenCode-Server starten",
-  "loading.stage.readying": "Sitzung abschließen",
+  "loading.stage.readying": "Sitzung verbinden",
 
   "app.welcomeBack": "Willkommen zurück, {{email}}",
   "app.sessions": "Sitzungen",

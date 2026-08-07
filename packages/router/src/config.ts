@@ -95,6 +95,10 @@ export const config = {
    */
   devViteUrl: process.env.DEV_VITE_URL,
   /**
+   * Proxy Header containing the users email. lower case!
+   */
+  authEmailHeader: process.env.AUTH_EMAIL_HEADER ?? "X-Auth-Request-Email",
+  /**
    * Dev-only: assumed email when X-Auth-Request-Email header is absent (never set in production)
    */
   devEmail: process.env.DEV_EMAIL,
