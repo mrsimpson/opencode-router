@@ -9,6 +9,7 @@ Fix the repository drop-down in the frontend so it lists repositories from organ
 ## Key Decisions
 * The fix will be in the backend (router) API handler since that's where the GitHub API call is made.
 * We will explicitly set `type=all` in the GitHub API query and implement pagination to fetch all repositories.
+* The `Autocomplete` component needed a separate `onInput` callback to decouple typing from item selection — `onSelect` should only fire on actual selection, not on every keystroke.
 
 ## Notes
 - The repository dropdown is rendered by `SessionInputBar` component (`packages/app/src/session-input-bar.tsx`)
@@ -80,12 +81,123 @@ Users cannot select organization repositories from the dropdown, forcing them to
 - [x] **Code Cleanup**: Verified no debug output, TODOs, or FIXMEs in changed files
 - [x] **Documentation Review**: No `/home/opencode/repo/.vibe/docs/design.md` exists — no docs to update
 - [x] **Final Validation**: All 216 tests pass via `vitest run src/`
-- [x] Commit the changes (`28a7656`)
+- [x] Commit the changes (`f911b42`)
 
 ### Completed
 *All Finalize tasks completed*
 
+## Frontend Investigation (Autocomplete still fails after backend fix)
 
+### Complete Flow: User Input to Displaying Suggestions
+
+```
+User types in repo URL input
+  └─> Autocomplete.onInput (packages/app/src/autocomplete.tsx:92-98)
+       │
+       │  Calls props.onSelect(v) with raw text input on EVERY keystroke
+       │  Opens dropdown if items exist and input is non-empty
+       │
+       ▼
+  SessionInputBar.onSelect handler (packages/app/src/session-input-bar.tsx:178-181)
+       │
+       │  Calls props.onRepoUrlChange(v) → sets repoUrl state
+       │  Calls loadBranchesForRepo(v) → fetches branches for the typed text
+       │
+       ▼
+  Autocomplete dropdown (packages/app/src/autocomplete.tsx:120-170)
+       │
+       │  Filters repoItems by matching query against item.label (repo name only)
+       │  Displays matching repos in dropdown
+       │
+       ▼
+  User selects a repo from dropdown (packages/app/src/autocomplete.tsx:159)
+       │
+       │  Calls handleSelect(item.value) → props.onSelect(item.value)
+       │  item.value = the repo URL (e.g. "https://github.com/org/repo")
+       │
+       ▼
+  SessionInputBar.onSelect handler again (same as step 2)
+       │
+       │  Calls props.onRepoUrlChange(url) → sets repoUrl state
+       │  Calls loadBranchesForRepo(url) → fetches branches for selected repo
+       │
+       ▼
+  loadBranchesForRepo (packages/app/src/session-input-bar.tsx:94-110)
+       │
+       │  Looks up repo in userRepos by URL (findRepoByUrl)
+       │  Sets defaultBranch on sourceBranch input
+       │  Calls listRepoBranches(fullName) → GET /api/user/repos/branches?repo=org/repo
+       │
+       ▼
+  Frontend API (packages/app/src/api.ts:226-231)
+       │
+       │  GET /api/user/repos/branches?repo=org/repo
+       │
+       ▼
+  Backend Router (packages/router/src/api.ts:606-642)
+       │
+       │  Calls GitHub API: GET /repos/{repo}/branches?per_page=100
+       │  Returns { name: string }[]
+```
+
+### API Endpoints Used
+
+| Frontend Function | Endpoint | Backend Handler |
+|---|---|---|
+| `listUserRepos()` | `GET /api/user/repos` | `packages/router/src/api.ts:528-604` |
+| `listRepoBranches(repo)` | `GET /api/user/repos/branches?repo=...` | `packages/router/src/api.ts:606-642` |
+
+### Key Files and Line Numbers
+
+| File | Lines | Purpose |
+|---|---|---|
+| `packages/app/src/autocomplete.tsx` | 1-173 | Generic autocomplete dropdown component |
+| `packages/app/src/autocomplete.tsx` | 27-31 | `filteredItems()` - filters by `label` field |
+| `packages/app/src/autocomplete.tsx` | 92-98 | `onInput` - calls `onSelect(v)` on every keystroke |
+| `packages/app/src/autocomplete.tsx` | 120 | Dropdown visibility condition |
+| `packages/app/src/autocomplete.tsx` | 148-168 | `For each={filteredItems()}` - renders dropdown items |
+| `packages/app/src/session-input-bar.tsx` | 28-40 | `loadUserRepos()` - lazy loads from API |
+| `packages/app/src/session-input-bar.tsx` | 80-91 | `ensureReposLoaded()` - maps Repo[] to {label, value} |
+| `packages/app/src/session-input-bar.tsx` | 94-110 | `loadBranchesForRepo()` - loads branches on selection |
+| `packages/app/src/session-input-bar.tsx` | 175-184 | Repo URL Autocomplete usage |
+| `packages/app/src/session-input-bar.tsx` | 185-190 | Branch Autocomplete usage |
+| `packages/app/src/api.ts` | 208-214 | `Repo` interface definition |
+| `packages/app/src/api.ts` | 220-224 | `listUserRepos()` - calls `GET /api/user/repos` |
+| `packages/app/src/api.ts` | 226-231 | `listRepoBranches()` - calls `GET /api/user/repos/branches` |
+| `packages/router/src/api.ts` | 528-604 | `GET /api/user/repos` handler (with type=all, pagination, dedup) |
+| `packages/router/src/api.ts` | 606-642 | `GET /api/user/repos/branches` handler |
+
+### BUG FOUND: `onSelect` is misused as both value setter and action trigger
+
+**Location**: `packages/app/src/autocomplete.tsx` line 94 and `packages/app/src/session-input-bar.tsx` lines 178-181
+
+**Problem**: The `Autocomplete` component calls `props.onSelect(v)` in its `onInput` handler (line 94) on every keystroke. The `session-input-bar.tsx` handler uses `onSelect` for two purposes:
+1. Setting the repo URL state (`props.onRepoUrlChange(v)`)
+2. Triggering branch loading (`loadBranchesForRepo(v)`)
+
+When the user types "my", the handler receives the raw text "my" (not a URL), and `loadBranchesForRepo("my")` is called. This:
+- Tries to parse "my" as a URL (strips protocol, removes `.git`)
+- Splits by "/" and gets only 1 part
+- The `repoParts.length >= 2` check prevents the API call, but the side effect is still triggered
+
+**Impact**: Every keystroke triggers unnecessary processing. While the guard in `loadBranchesForRepo` prevents crashes, the pattern is fragile and the autocomplete behavior is inconsistent.
+
+**Root cause of autocomplete "failing"**: The `onInput` handler calls `props.onSelect(v)` with the raw input text. The `Autocomplete` component's `onSelect` prop is semantically meant for "user selected an item" but is being used as "value changed". This conflates two different events.
+
+### Fix Applied
+
+The `Autocomplete` component now has a separate `onInput` callback to decouple typing from item selection:
+
+**`packages/app/src/autocomplete.tsx`**:
+- Added `onInput?: (value: string) => void` to Props type (line 12)
+- Changed `onInput` handler to call `props.onInput?.(v)` instead of `props.onSelect(v)` (line 95)
+
+**`packages/app/src/session-input-bar.tsx`**:
+- Split the `onSelect` prop into `onInput` (for typing, updates repoUrl state only) and `onSelect` (for selection, loads branches) (lines 178-180)
+
+### Additional Observation: Filtering by label only
+
+The `Autocomplete` component filters items by matching the query against `item.label` only (line 30 of `autocomplete.tsx`). For repos, `label` is just the repo name (e.g., "my-repo"), not the full path (e.g., "org/my-repo"). Users who type "org/my" will not see matches because the org name is not in the label. This is a UX limitation but not a bug -- the dropdown shows all repos when no query is entered, and org repos are included in the list.
 
 ---
-*This plan is maintained by the LLM. Tool responses provide guidance on which section to focus on and what tasks to work on.*
+*This plan is maintained by the LLM. Tool responses provide guidance on which section to focus on and what section to work on.*
