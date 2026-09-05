@@ -13,9 +13,9 @@
     "@opencode-ai/plugin": "1.15.11",
     "@opencode-ai/sdk": "1.15.11",
     "@tsconfig/node22": "22.0.2",
-    "@types/node": "^22.0.0",
-    "tsup": "^8.0.0",
+    "@types/node": "22.19.19",
+    "tsup": "8.5.1",
     "typescript": "5.8.2",
-    "vitest": "^3.0.0"
+    "vitest": "3.2.4"
   }
 }
