@@ -10,7 +10,7 @@
     "test": "vitest run src/"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "1.15.11",
+    "@opencode-ai/plugin": "1.18.29",
     "@opencode-ai/sdk": "1.15.11",
     "@tsconfig/node22": "22.0.2",
     "@types/node": "^22.0.0",
