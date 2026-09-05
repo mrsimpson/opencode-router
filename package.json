@@ -3,7 +3,7 @@
   "description": "Standalone opencode-router with management SPA and plugin",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@10.0.0",
+  "packageManager": "pnpm@11.25.0",
   "scripts": {
     "build": "pnpm --filter ./packages/router build && pnpm --filter ./packages/app build && pnpm --filter ./packages/editor build",
     "typecheck": "pnpm --filter ./packages/router typecheck && pnpm --filter ./packages/app typecheck && pnpm --filter ./packages/plugin typecheck && pnpm --filter ./packages/editor typecheck",
