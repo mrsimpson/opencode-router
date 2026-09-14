@@ -6,6 +6,7 @@ import { handleApi } from "./api.js"
 import { config } from "./config.js"
 import * as devProxy from "./dev-proxy.js"
 import {
+  constructPodUrl,
   deleteIdlePods,
   getPodIP,
   updateLastActivity,
@@ -159,7 +160,7 @@ async function proxyToPod(
     target = await devProxy.target(hash, targetPort)
   } else {
     const ip = await getPodIP(hash)
-    if (ip) target = `http://${ip}:${targetPort}`
+    if (ip) target = constructPodUrl (ip, targetPort)
   }
   if (!target) return false
 
