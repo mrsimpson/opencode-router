@@ -353,9 +353,9 @@ export async function handleApi(
     let lastState = initial.state
     let lastStage = ""
     // Limit how long we wait for a running pod to resolve its deep link URL.
-    // Each poll is 1 s; 30 polls = 30 s max after the pod becomes running.
+    // Each poll is 1 s; 300 polls = 5 min max after the pod becomes running.
     let runningPollCount = initial.state === "running" ? 1 : 0
-    const MAX_RUNNING_POLLS = 30
+    const MAX_RUNNING_POLLS = 300
 
     // Send initial progress immediately
     const progress = await getSessionProgress(hash)

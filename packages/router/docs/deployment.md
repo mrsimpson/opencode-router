@@ -543,7 +543,7 @@ Init containers (if git repo configured):
 Containers:
   opencode:
     image: <OPENCODE_IMAGE>
-    command: opencode serve --hostname 0.0.0.0 --port 4096
+    command: opencode serve --hostname :: --port 4096
     ports: 4096
     envFrom: secret/opencode-api-keys
     volumeMounts:
