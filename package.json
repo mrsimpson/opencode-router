@@ -16,6 +16,6 @@
   },
   "devDependencies": {
     "husky": "^9.1.7",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.2"
   }
 }
