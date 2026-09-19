@@ -1,5 +1,5 @@
 # Stage 1: Build the management UI SPA
-FROM node:22-slim AS spa-build
+FROM node:22.23.2-slim AS spa-build
 ARG APP_VERSION=dev
 WORKDIR /repo
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
@@ -11,7 +11,7 @@ COPY packages/app/ packages/app/
 RUN VITE_APP_VERSION="${APP_VERSION}" pnpm --filter @opencode-ai/router-app build
 
 # Stage 2: Build the router
-FROM node:22-slim AS router-build
+FROM node:22.23.2-slim AS router-build
 WORKDIR /repo
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
 COPY packages/router/package.json packages/router/
@@ -20,7 +20,7 @@ COPY packages/router/ packages/router/
 RUN pnpm --filter @opencode-ai/router build
 
 # Stage 3: Final image
-FROM node:22-alpine
+FROM node:22.23.2-alpine
 WORKDIR /app
 COPY --from=router-build /repo/packages/router/dist ./dist
 COPY --from=spa-build /repo/packages/app/dist ./public
