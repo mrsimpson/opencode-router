@@ -20,7 +20,7 @@
     "@tsconfig/node22": "22.0.2",
     "tailwindcss": "4.1.11",
     "typescript": "5.8.2",
-    "vite": "7.1.4",
+    "vite": "7.3.6",
     "vite-plugin-solid": "2.11.10",
     "vitest": "^3.0.0"
   }
