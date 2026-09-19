@@ -44,7 +44,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       image: ${{ steps.version.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Login to GHCR
         run: |
@@ -83,7 +83,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       image: ${{ steps.version.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Login to GHCR
         run: |
