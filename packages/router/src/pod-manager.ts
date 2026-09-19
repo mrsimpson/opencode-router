@@ -804,7 +804,7 @@ export async function ensurePod(
   //   Skipped on pod restart.
   // Phase 2 — git: clone repo + checkout session branch. Safe.directory avoids needing a writable HOME.
   const initScript = [
-    `set -e`,
+    `set -e -x`,
     // --- config phase (idempotent) ---
     `if [ ! -d /home/opencode/.config/opencode ]; then`,
     `  mkdir -p /home/opencode/.config/opencode`,
