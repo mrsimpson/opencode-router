@@ -17,7 +17,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.11",
-    "@tsconfig/node22": "22.0.2",
+    "@tsconfig/node22": "22.0.6",
     "tailwindcss": "4.1.11",
     "typescript": "5.8.2",
     "vite": "7.1.4",
