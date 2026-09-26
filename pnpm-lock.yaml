@@ -61,7 +61,7 @@ importers:
         specifier: ^22.0.0
         version: 22.19.19
       tsx:
-        specifier: ^4.19.0
+        specifier: ^4.22.3
         version: 4.22.3
       typescript:
         specifier: ^5.7.0
