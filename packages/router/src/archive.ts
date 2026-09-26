@@ -50,6 +50,11 @@ export async function archiveSession(hash: string, openCodeSessionId: string, po
       reject(new Error(`Archive timed out after ${config.archiveTimeoutMs}ms`))
     }, config.archiveTimeoutMs)
 
+    fileStream.once("error", (err) => {
+      clearTimeout(timeout)
+      reject(err)
+    })
+
     execImpl(
       config.namespace,
       podName,
@@ -61,13 +66,19 @@ export async function archiveSession(hash: string, openCodeSessionId: string, po
       false,
       (status: k8s.V1Status) => {
         clearTimeout(timeout)
-        fileStream.end()
-        if (status.status === "Success") {
-          resolve()
-        } else {
-          const stderrText = Buffer.concat(stderrChunks).toString("utf-8").trim()
-          reject(new Error(`Export command failed (${status.reason ?? status.status}): ${stderrText || status.message}`))
+        const settle = () => {
+          if (status.status === "Success") {
+            resolve()
+          } else {
+            const stderrText = Buffer.concat(stderrChunks).toString("utf-8").trim()
+            reject(new Error(`Export command failed (${status.reason ?? status.status}): ${stderrText || status.message}`))
+          }
         }
+        // The exec handler ends stdout right before invoking this callback, but
+        // fs.WriteStream writes asynchronously — settle only once the file is flushed.
+        fileStream.end()
+        if (fileStream.writableFinished) settle()
+        else fileStream.once("finish", settle)
       },
     )
       .catch((err) => {
