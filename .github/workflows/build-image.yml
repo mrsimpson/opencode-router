@@ -67,6 +67,7 @@ jobs:
         run: |
           docker build \
             --build-arg APP_VERSION="${{ steps.version.outputs.tag }}" \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             -t ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }} \
             -t ${{ env.IMAGE_NAME }}:latest \
             .
@@ -106,6 +107,7 @@ jobs:
         working-directory: packages/editor
         run: |
           docker build \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             -t ${{ env.EDITOR_IMAGE_NAME }}:${{ steps.version.outputs.tag }} \
             -t ${{ env.EDITOR_IMAGE_NAME }}:latest \
             .
