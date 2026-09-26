@@ -29,7 +29,7 @@ describe("archiveSession", () => {
       return undefined
     })
 
-    await archiveSession("flushhash", "ses_1", "pod-1", "user@example.com")
+    await archiveSession("flushhash", "pod-1", "user@example.com", ["opencode", "export", "ses_1"])
 
     const written = fs.readFileSync(path.join(archiveDir, "user@example.com", "flushhash.json"), "utf-8")
     expect(written).toBe(payload)
@@ -44,7 +44,7 @@ describe("archiveSession", () => {
       return undefined
     })
 
-    await expect(archiveSession("failhash", "ses_2", "pod-2", "user@example.com")).rejects.toThrow(
+    await expect(archiveSession("failhash", "pod-2", "user@example.com", ["opencode", "export", "ses_2"])).rejects.toThrow(
       "Export command failed (NonZeroExitCode): session not found",
     )
   })

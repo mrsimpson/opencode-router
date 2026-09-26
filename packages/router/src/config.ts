@@ -27,6 +27,12 @@ export const config = {
   editorImage: process.env.EDITOR_IMAGE ?? "ghcr.io/mrsimpson/opencode-editor:latest",
   opencodePort: 4096,
   /**
+   * opencode server API of the session image: "v1" (opencode 1.x), "v2" (opencode 2.x), or
+   * "auto" to detect per pod. See docs/adr-003-opencode-version-adapters.md.
+   * Default: auto
+   */
+  opencodeApi: process.env.OPENCODE_API ?? "auto",
+  /**
    * Port for the attach server (local client connecting to router session).
    * This server is NOT behind oauth2-proxy and handles attach subdomain requests
    * with password-based auth instead of OAuth.

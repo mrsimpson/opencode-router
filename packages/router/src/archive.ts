@@ -4,6 +4,7 @@ import stream from "node:stream"
 import * as k8s from "@kubernetes/client-node"
 import { config } from "./config.js"
 import { k8sApi, getKubeConfig } from "./pod-manager.js"
+import { adapterFor, type OpencodeGeneration } from "./opencode/index.js"
 
 function hasCode(err: unknown): err is { code: number } {
   return typeof err === "object" && err !== null && "code" in err && typeof (err as Record<string, unknown>).code === "number"
@@ -34,7 +35,16 @@ export function _setExecImpl(fn: ExecFn) {
   execImpl = fn
 }
 
-export async function archiveSession(hash: string, openCodeSessionId: string, podName: string, email: string): Promise<void> {
+/**
+ * Export a session by exec'ing `exportCommand` (see OpencodeAdapter.exportCommand) in the pod's
+ * opencode container and writing its stdout to the user's archive directory.
+ */
+export async function archiveSession(
+  hash: string,
+  podName: string,
+  email: string,
+  exportCommand: string[],
+): Promise<void> {
   const userDir = path.join(config.archiveDir, email)
   fs.mkdirSync(userDir, { recursive: true })
   const archivePath = path.join(userDir, `${hash}.json`)
@@ -59,7 +69,7 @@ export async function archiveSession(hash: string, openCodeSessionId: string, po
       config.namespace,
       podName,
       "opencode",
-      ["opencode", "export", openCodeSessionId],
+      exportCommand,
       fileStream,
       stderr,
       null,
@@ -144,7 +154,12 @@ export function readArchive(hash: string, email: string): { exists: true; data: 
   }
 }
 
-export async function archiveStoppedSession(hash: string, openCodeSessionId: string, email: string): Promise<void> {
+export async function archiveStoppedSession(
+  hash: string,
+  openCodeSessionId: string,
+  email: string,
+  generation: OpencodeGeneration,
+): Promise<void> {
   const { buildExportPodManifest } = await import("./pod-manager.js")
   const tempPodName = `opencode-session-${hash}-export`
 
@@ -175,7 +190,8 @@ export async function archiveStoppedSession(hash: string, openCodeSessionId: str
 
     // Run export in temporary pod
     console.log(`[archive] Temporary export pod ${tempPodName} is Running, starting export`)
-    await archiveSession(hash, openCodeSessionId, tempPodName, email)
+    const exportCommand = adapterFor(generation).exportCommand(openCodeSessionId, "stopped")
+    await archiveSession(hash, tempPodName, email, exportCommand)
     console.log(`[archive] Export success for session ${hash} via temporary pod`)
   } finally {
     // Always clean up temporary pod
