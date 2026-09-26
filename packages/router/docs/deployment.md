@@ -11,7 +11,7 @@ Internet → Ingress → oauth2-proxy (authentication) → opencode-router → p
 ```
 
 The router is a mostly stateless Node.js process that:
-- Reads the authenticated user's email from the `X-Auth-Request-Email` header
+- Reads the authenticated user's email from the `X-Auth-Request-Email` header (configurable via `AUTH_EMAIL_HEADER`)
 - Serves a setup UI (SolidJS SPA) on first visit so the user can pick a git repo to clone
 - Provisions a PersistentVolumeClaim and Pod per user via the Kubernetes API
 - Proxies all HTTP and WebSocket traffic to the user's running Pod
@@ -236,6 +236,7 @@ spec:
 | `OPENCODE_IMAGE` | **Yes** | — | Docker image for user Pods (must be pullable by the cluster) |
 | `OPENCODE_NAMESPACE` | No | `opencode` | Namespace where user Pods and PVCs are created |
 | `PORT` | No | `3000` | Port the router listens on |
+| `AUTH_EMAIL_HEADER` | No | `X-Auth-Request-Email` | Request header carrying the authenticated user's email (set by the auth proxy) |
 | `IDLE_TIMEOUT_MINUTES` | No | `30` | Minutes of inactivity before a user's Pod is deleted |
 | `API_KEY_SECRET_NAME` | No | `opencode-api-keys` | Name of the Secret injected into user Pods |
 | `CONFIG_MAP_NAME` | No | `opencode-config-dir` | Name of the ConfigMap mounted as `/root/.opencode` |
