@@ -1,4 +1,4 @@
-import { Match, Show, Switch, createSignal, onMount } from "solid-js"
+import { Match, Show, Switch, createSignal, onCleanup, onMount } from "solid-js"
 import { useI18n } from "./ui/context"
 import { Button } from "./ui/button"
 import { useT } from "./i18n"
@@ -90,8 +90,11 @@ export function SessionInputBar(props: Props) {
     setReposLoading(false)
   }
 
-  // Load branches when repo is selected and set default branch
+  // Load branches when repo is selected and set default branch.
+  // Only the most recent request may update the branch list.
+  let latestBranchRequest = ""
   const loadBranchesForRepo = async (url: string) => {
+    latestBranchRequest = url
     const repo = findRepoByUrl(url)
     const newBranch = repo?.defaultBranch
     if (newBranch) props.onSourceBranchChange(newBranch)
@@ -102,11 +105,26 @@ export function SessionInputBar(props: Props) {
       const repoParts = repoFullName.split("/")
       if (repoParts.length >= 2) {
         const branches = await listRepoBranches(`${repoParts[repoParts.length - 2]}/${repoParts[repoParts.length - 1]}`)
-        setBranchItems(branches.map((b) => ({ label: b.name, value: b.name })))
+        if (latestBranchRequest === url) setBranchItems(branches.map((b) => ({ label: b.name, value: b.name })))
       }
     } catch {
-      setBranchItems([])
+      if (latestBranchRequest === url) setBranchItems([])
     }
+  }
+
+  // Typed or pasted URLs: load branches once the input is a complete git URL and typing pauses
+  let branchLoadTimer: ReturnType<typeof setTimeout> | undefined
+  onCleanup(() => clearTimeout(branchLoadTimer))
+  const handleRepoUrlInput = (v: string) => {
+    props.onRepoUrlChange(v)
+    clearTimeout(branchLoadTimer)
+    if (GIT_URL_PATTERN.test(v.trim())) branchLoadTimer = setTimeout(() => loadBranchesForRepo(v.trim()), 400)
+  }
+
+  const handleRepoSelect = (v: string) => {
+    clearTimeout(branchLoadTimer)
+    props.onRepoUrlChange(v)
+    loadBranchesForRepo(v)
   }
 
   onMount(() => {
@@ -175,14 +193,15 @@ export function SessionInputBar(props: Props) {
             <Autocomplete
               placeholder={t("app.newSession.repoUrl.placeholder")}
               value={props.repoUrl}
-              onInput={(v) => props.onRepoUrlChange(v)}
-              onSelect={(v) => loadBranchesForRepo(v)}
+              onInput={handleRepoUrlInput}
+              onSelect={handleRepoSelect}
               items={repoItems()}
               loading={reposLoading()}
             />
             <Autocomplete
               placeholder={t("app.newSession.sourceBranch.placeholder")}
               value={props.sourceBranch}
+              onInput={props.onSourceBranchChange}
               onSelect={props.onSourceBranchChange}
               items={branchItems()}
             />
