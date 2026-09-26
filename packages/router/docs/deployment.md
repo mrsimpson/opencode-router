@@ -234,6 +234,7 @@ spec:
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `OPENCODE_IMAGE` | **Yes** | — | Docker image for user Pods (must be pullable by the cluster) |
+| `OPENCODE_API` | No | `auto` | opencode server API of `OPENCODE_IMAGE`: `v1` (opencode 1.x), `v2` (opencode 2.x) or `auto` to detect per pod ([ADR-003](adr-003-opencode-version-adapters.md)) |
 | `OPENCODE_NAMESPACE` | No | `opencode` | Namespace where user Pods and PVCs are created |
 | `PORT` | No | `3000` | Port the router listens on |
 | `AUTH_EMAIL_HEADER` | No | `X-Auth-Request-Email` | Request header carrying the authenticated user's email (set by the auth proxy) |

@@ -1378,6 +1378,62 @@ describe("buildSessionInfo — resume vs bootstrap URL resolution", () => {
     expect(result?.url).toBeNull()
     expect(bootstrapCalls).toHaveLength(0)
   })
+
+  describe("opencode 2.x pod", () => {
+    const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } })
+
+    function mockV2Activity(sessions: { id: string; time: { updated: number } }[]) {
+      _setActivityFetch(async (url) => {
+        if (url.endsWith("/api/info")) return json({ version: "2.0.18" })
+        if (url.includes("/api/session?")) return json({ data: sessions, cursor: {} })
+        return new Response("not found", { status: 404 })
+      })
+    }
+
+    beforeEach(async () => {
+      const { _clearAdapterCache } = await import("./opencode/index.js")
+      _clearAdapterCache()
+      _setBootstrapFetch(async (url, init) => {
+        bootstrapCalls.push({ url, init })
+        if (url.endsWith("/api/session")) return json({ data: { id: "ses_v2new" } })
+        if (url.endsWith("/api/session/ses_v2new/prompt")) return json({ data: { admittedSeq: 1 } })
+        return new Response("not found", { status: 404 })
+      })
+    })
+
+    afterEach(async () => {
+      const { _clearAdapterCache } = await import("./opencode/index.js")
+      _clearAdapterCache()
+    })
+
+    it("bootstraps through /api/session, links with the 2.x deep link and records the API on the PVC", async () => {
+      fakePVCs = [makePVCWithInitialMessage(SESSION_HASH, EMAIL, REPO, BRANCH, "Build me an app")]
+      fakePods = [makeRunningPod(SESSION_HASH, EMAIL, REPO, BRANCH)]
+      mockV2Activity([])
+
+      const result = await getSessionInfo(SESSION_HASH)
+
+      expect(bootstrapCalls.map((c) => c.url.replace(/^http:\/\/[^/]+/, ""))).toEqual([
+        "/api/session",
+        "/api/session/ses_v2new/prompt",
+      ])
+      expect(JSON.parse(String(bootstrapCalls[1].init?.body))).toEqual({ prompt: { text: "Build me an app" } })
+      expect(result?.url).toMatch(/\/server\/[A-Za-z0-9_-]+\/session\/ses_v2new$/)
+      expect((fakePVCs[0] as any).metadata.annotations["opencode.ai/opencode-api"]).toBe("v2")
+    })
+
+    it("links a resumed pod to its newest root session", async () => {
+      fakePVCs = [makePVC(SESSION_HASH, EMAIL, REPO, BRANCH)]
+      fakePods = [makeRunningPod(SESSION_HASH, EMAIL, REPO, BRANCH)]
+      mockV2Activity([{ id: "ses_existing", time: { updated: Date.now() } }])
+
+      const result = await getSessionInfo(SESSION_HASH)
+
+      expect(result?.url).toMatch(/\/server\/[A-Za-z0-9_-]+\/session\/ses_existing$/)
+      expect(bootstrapCalls).toHaveLength(0)
+      expect((fakePVCs[0] as any).metadata.annotations["opencode.ai/opencode-api"]).toBe("v2")
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -1925,6 +1981,33 @@ describe.sequential("terminateSession — archive on termination", () => {
     expect(fs.existsSync(archivePath)).toBe(true)
     const content = JSON.parse(fs.readFileSync(archivePath, "utf-8"))
     expect(content.openCodeSessionId).toBe("test-session-123")
+  })
+
+  it("exports a stopped session with the opencode API recorded on the PVC", async () => {
+    const { _clearAdapterCache } = await import("./opencode/index.js")
+    _clearAdapterCache()
+    const pvc = makePVC(SESSION_HASH, EMAIL, REPO, BRANCH)
+    pvc.metadata.annotations["opencode.ai/session-id"] = "ses_v2stopped"
+    pvc.metadata.annotations["opencode.ai/opencode-api"] = "v2"
+    fakePVCs = [pvc]
+    fakePods = []
+    const { _clearBootstrappedSessions } = await import("./pod-manager.js")
+    _clearBootstrappedSessions()
+
+    const commands: string[][] = []
+    const originalExec = (fakeK8sApi as any).connectGetNamespacedPodExec
+    ;(fakeK8sApi as any).connectGetNamespacedPodExec = (args: { name: string; command: string[] }) => {
+      commands.push(args.command)
+      return originalExec(args)
+    }
+    try {
+      await (terminateSession as any)(SESSION_HASH, EMAIL)
+    } finally {
+      ;(fakeK8sApi as any).connectGetNamespacedPodExec = originalExec
+    }
+
+    expect(commands).toEqual([["opencode", "session", "export", "ses_v2stopped", "--standalone"]])
+    expect(fakePVCs).toHaveLength(0)
   })
 
   it("proceeds with PVC deletion even if temp pod archive fails (strictMode=false)", async () => {

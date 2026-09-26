@@ -4,6 +4,7 @@ import * as k8s from "@kubernetes/client-node"
 import { humanId as _humanId } from "human-id"
 import { config } from "./config.js"
 import * as devProxy from "./dev-proxy.js"
+import { adapterFor, isGeneration, knownGeneration, resolveAdapter, type OpencodeAdapter, type OpencodeGeneration } from "./opencode/index.js"
 import { podSecretStore } from "./pod-secret-store.js"
 import { messageStore } from "./message-store.js"
 import { portStore } from "./port-store.js"
@@ -156,6 +157,8 @@ const ANNOTATION_CREATED_AT = "opencode.ai/created-at"
 const ANNOTATION_POD_SECRET = "opencode.ai/pod-secret"
 const ANNOTATION_ATTACH_PASSWORD = "opencode.ai/attach-password"
 const ANNOTATION_SESSION_ID = "opencode.ai/session-id"
+/** opencode API generation ("v1" | "v2") last detected on this session's pod — picks the export command for stopped sessions. */
+const ANNOTATION_OPENCODE_API = "opencode.ai/opencode-api"
 const LABEL_EXPORT_POD = "opencode.ai/export-pod"
 
 /** In-memory throttle for annotation updates: hash → last update epoch ms */
@@ -279,20 +282,15 @@ async function buildSessionInfo(
         // Existing sessions on the pod — link to the most recently active one.
         // This is the resume case: the PVC has sessions in SQLite from a prior run.
         sessionId = activity.sessionId
-        sessionUrl = deepLinkUrl(`${proto}://${hash}${config.routeSuffix}.${config.routerDomain}`, activity.sessionId)
+        sessionUrl = activity.adapter.deepLink(`${proto}://${hash}${config.routeSuffix}.${config.routerDomain}`, activity.sessionId)
       } else if (initialMessage) {
         // Fresh pod (no sessions yet) with an initialMessage — bootstrap a new session.
-        // All concurrent callers await the same Promise — only one POST /session is ever sent.
+        // All concurrent callers await the same Promise — only one session is ever created.
         // Returns null while bootstrap is in-flight or if it has permanently failed.
-        let base = constructPodUrl(pod.status.podIP, config.opencodePort)
-        if (devProxy.enabled) {
-          const proxyTarget = await devProxy.target(hash)
-          if (proxyTarget) base = proxyTarget
-        }
-        const bootstrappedId = await bootstrapPodSession(base, hash, initialMessage)
+        const bootstrappedId = await bootstrapPodSession(activity.base, hash, initialMessage, activity.adapter)
         sessionId = bootstrappedId ?? undefined
         sessionUrl = bootstrappedId
-          ? deepLinkUrl(`${proto}://${hash}${config.routeSuffix}.${config.routerDomain}`, bootstrappedId)
+          ? activity.adapter.deepLink(`${proto}://${hash}${config.routeSuffix}.${config.routerDomain}`, bootstrappedId)
           : null
       }
       // else: running pod with no sessions yet and no initialMessage → url stays null
@@ -356,20 +354,29 @@ export async function getSessionInfo(hash: string): Promise<SessionInfo | null> 
   const email = pvc.metadata?.annotations?.[ANNOTATION_USER_EMAIL] ?? ""
   const sessionInfo = await buildSessionInfo(hash, pvc, pod, email)
 
-  // Backfill sessionId annotation on the PVC for archive resilience
-  if (sessionInfo.sessionId && pvc.metadata?.annotations?.[ANNOTATION_SESSION_ID] !== sessionInfo.sessionId) {
+  // Backfill sessionId and opencode API annotations on the PVC for archive resilience
+  const pvcAnnotations = pvc.metadata?.annotations ?? {}
+  const backfill: Record<string, string> = {}
+  if (sessionInfo.sessionId && pvcAnnotations[ANNOTATION_SESSION_ID] !== sessionInfo.sessionId) {
+    backfill[ANNOTATION_SESSION_ID] = sessionInfo.sessionId
+  }
+  const generation = knownGeneration(hash)
+  if (sessionInfo.state === "running" && generation && pvcAnnotations[ANNOTATION_OPENCODE_API] !== generation) {
+    backfill[ANNOTATION_OPENCODE_API] = generation
+  }
+  if (Object.keys(backfill).length > 0) {
     try {
       await k8sApi.patchNamespacedPersistentVolumeClaim({
         name: pvcName(hash),
         namespace: config.namespace,
         body: {
           metadata: {
-            annotations: { [ANNOTATION_SESSION_ID]: sessionInfo.sessionId },
+            annotations: backfill,
           },
         },
       })
     } catch (err) {
-      console.warn(`[archive] Failed to backfill PVC session-id annotation for ${hash}:`, err)
+      console.warn(`[archive] Failed to backfill PVC annotations for ${hash}:`, err)
     }
   }
 
@@ -598,38 +605,27 @@ export async function getUserSecret(email: string): Promise<Record<string, strin
   }
 }
 
-const WORKSPACE_BASE64 = Buffer.from("/home/opencode/repo").toString("base64").replace(/=+$/, "")
-
-function deepLinkUrl(podUrl: string, sessionId: string): string {
-  return `${podUrl}/${WORKSPACE_BASE64}/session/${sessionId}`
-}
-
 /**
- * Create an opencode session on a running pod and fire the initial message via
- * prompt_async. Returns the opencode session ID on success, or null on failure.
+ * Create an opencode session on a running pod and submit the initial message without
+ * waiting for the answer. Returns the opencode session ID on success, or null on failure.
  *
- * Concurrent callers all await the same in-flight Promise — only one POST /session
- * is ever sent per pod hash. On failure the entry is deleted so the next poll can
+ * Concurrent callers all await the same in-flight Promise — only one session
+ * is ever created per pod hash. On failure the entry is deleted so the next poll can
  * retry. On success the entry persists so future URL lookups always return the same
  * session ID (stable deep link even after activity on other sessions on the same pod).
  */
-function bootstrapPodSession(base: string, hash: string, initialMessage: string): Promise<string | null> {
+function bootstrapPodSession(
+  base: string,
+  hash: string,
+  initialMessage: string,
+  adapter: OpencodeAdapter,
+): Promise<string | null> {
   const existing = bootstrappedSessions.get(hash)
   if (existing !== undefined) return existing
 
   const promise = (async () => {
     try {
-      const createRes = await bootstrapFetchImpl(`${base}/session`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      })
-      if (!createRes.ok) {
-        bootstrappedSessions.delete(hash)
-        return null
-      }
-      const session = (await createRes.json()) as { id?: string }
-      const sessionId = session.id
+      const sessionId = await adapter.createSession(base, bootstrapFetchImpl)
       if (!sessionId) {
         bootstrappedSessions.delete(hash)
         return null
@@ -641,19 +637,14 @@ function bootstrapPodSession(base: string, hash: string, initialMessage: string)
           namespace: config.namespace,
           body: {
             metadata: {
-              annotations: { [ANNOTATION_SESSION_ID]: sessionId },
+              annotations: { [ANNOTATION_SESSION_ID]: sessionId, [ANNOTATION_OPENCODE_API]: adapter.generation },
             },
           },
         })
       } catch (err) {
         console.warn(`[archive] Failed to patch PVC session-id annotation for ${hash}:`, err)
       }
-      const promptRes = await bootstrapFetchImpl(`${base}/session/${sessionId}/prompt_async`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parts: [{ type: "text", text: initialMessage }] }),
-      })
-      if (!promptRes.ok) {
+      if (!(await adapter.sendPrompt(base, sessionId, initialMessage, bootstrapFetchImpl))) {
         bootstrappedSessions.delete(hash)
         return null
       }
@@ -1475,7 +1466,8 @@ export async function terminateSession(hash: string, email: string): Promise<voi
         if (openCodeSessionId) {
           console.log(`[archive] Starting export for session ${hash} (running pod, openCodeSessionId=${openCodeSessionId})`)
           const { archiveSession } = await import("./archive.js")
-          await archiveSession(hash, openCodeSessionId, podName(hash), email)
+          const command = adapterFor(archiveGeneration(hash, pvc)).exportCommand(openCodeSessionId, "running")
+          await archiveSession(hash, podName(hash), email, command)
           console.log(`[archive] Export success for session ${hash}`)
         } else {
           console.log(`[archive] Export skipped for session ${hash}: bootstrap returned null openCodeSessionId`)
@@ -1529,7 +1521,7 @@ export async function terminateSession(hash: string, email: string): Promise<voi
       try {
         console.log(`[archive] Starting export for session ${hash} (stopped pod, temp pod, openCodeSessionId=${openCodeSessionId})`)
         const { archiveStoppedSession } = await import("./archive.js")
-        await archiveStoppedSession(hash, openCodeSessionId, email)
+        await archiveStoppedSession(hash, openCodeSessionId, email, archiveGeneration(hash, pvc))
         console.log(`[archive] Export success for session ${hash} (stopped pod)`)
       } catch (err) {
         console.error(`[archive] Export failed for session ${hash} (stopped pod):`, err)
@@ -1631,8 +1623,13 @@ export function constructPodUrl(ip: string, port: number): string {
   return base
 }
 
-/** Poll a running pod's /session endpoint. Returns time.updated ms or null. */
-async function podActivityMs(ip: string, hash: string): Promise<{ ms: number; sessionId?: string } | null> {
+type PodActivity = { ms: number; sessionId?: string; base: string; adapter: OpencodeAdapter }
+
+/**
+ * Poll a running pod's opencode server for its newest root session. Returns its time.updated ms
+ * (plus the base URL and API adapter for follow-up calls), or null when the pod is unreachable.
+ */
+async function podActivityMs(ip: string, hash: string): Promise<PodActivity | null> {
   try {
     let base = constructPodUrl(ip, config.opencodePort)
     if (devProxy.enabled) {
@@ -1640,16 +1637,22 @@ async function podActivityMs(ip: string, hash: string): Promise<{ ms: number; se
       if (!proxyTarget) return null
       base = proxyTarget
     }
-    const res = await activityFetchImpl(`${base}/session?limit=1&roots=true`)
-    if (!res.ok) return null
-    const data = (await res.json()) as { id: string; time: { updated: number } }[]
-    // Empty sessions = fresh pod that is reachable but has no sessions yet.
+    const adapter = await resolveAdapter(hash, base, activityFetchImpl)
+    if (!adapter) return null
+    const latest = await adapter.latestRootSession(base, activityFetchImpl)
+    if (!latest) return null
+    // No sessions = fresh pod that is reachable but has no sessions yet (sessionId undefined).
     // Return non-null so the caller can bootstrap a session via bootstrapPodSession.
-    if (!data[0]) return { ms: Date.now(), sessionId: undefined }
-    return { ms: data[0].time?.updated ?? Date.now(), sessionId: data[0].id }
+    return { ms: latest.updatedMs, sessionId: latest.id, base, adapter }
   } catch {
     return null
   }
+}
+
+/** opencode API generation to archive `hash` with: detected or pinned, else the PVC annotation, else v1. */
+function archiveGeneration(hash: string, pvc: k8s.V1PersistentVolumeClaim): OpencodeGeneration {
+  const annotated = pvc.metadata?.annotations?.[ANNOTATION_OPENCODE_API]
+  return knownGeneration(hash) ?? (isGeneration(annotated) ? annotated : "v1")
 }
 
 /**
