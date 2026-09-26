@@ -34,8 +34,8 @@ importers:
         specifier: 4.1.11
         version: 4.1.11(vite@7.1.4(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.30.1)(tsx@4.22.3)(yaml@2.9.0))
       '@tsconfig/node22':
-        specifier: 22.0.2
-        version: 22.0.2
+        specifier: 22.0.6
+        version: 22.0.6
       tailwindcss:
         specifier: 4.1.11
         version: 4.1.11
@@ -55,8 +55,8 @@ importers:
   packages/editor:
     devDependencies:
       '@tsconfig/node22':
-        specifier: ^22.0.0
-        version: 22.0.2
+        specifier: ^22.0.2
+        version: 22.0.6
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19
@@ -76,8 +76,8 @@ importers:
         specifier: 1.15.11
         version: 1.15.11
       '@tsconfig/node22':
-        specifier: 22.0.2
-        version: 22.0.2
+        specifier: 22.0.6
+        version: 22.0.6
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19
@@ -107,8 +107,8 @@ importers:
         version: 4.1.8
     devDependencies:
       '@tsconfig/node22':
-        specifier: ^22.0.0
-        version: 22.0.2
+        specifier: ^22.0.5
+        version: 22.0.6
       '@types/http-proxy':
         specifier: ^1.17.16
         version: 1.17.17
@@ -1093,8 +1093,8 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7
 
-  '@tsconfig/node22@22.0.2':
-    resolution: {integrity: sha512-Kmwj4u8sDRDrMYRoN9FDEcXD8UpBSaPQQ24Gz+Gamqfm7xxn+GBR7ge/Z7pK8OXNGyUzbSwJj+TH6B+DS/epyA==}
+  '@tsconfig/node22@22.0.6':
+    resolution: {integrity: sha512-/5thavHAnWDZwH2H6eEn/T8pBEBhtuKaWGMslsj82kJfvzQgOgEMK7X4goBbIUjgVtAzPTtM9Ml64LA0uxO6Iw==}
 
   '@types/babel__core@7.20.5':
     resolution: {integrity: sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==}
@@ -2838,7 +2838,7 @@ snapshots:
       tailwindcss: 4.1.11
       vite: 7.1.4(@types/node@24.12.4)(jiti@2.7.0)(lightningcss@1.30.1)(tsx@4.22.3)(yaml@2.9.0)
 
-  '@tsconfig/node22@22.0.2': {}
+  '@tsconfig/node22@22.0.6': {}
 
   '@types/babel__core@7.20.5':
     dependencies:
