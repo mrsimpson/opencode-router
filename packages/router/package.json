@@ -18,7 +18,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "@tsconfig/node22": "^22.0.0",
+    "@tsconfig/node22": "^22.0.5",
     "@types/http-proxy": "^1.17.16",
     "@types/node": "^22.0.0",
     "esbuild": "^0.25.0",
